@@ -52,7 +52,11 @@ setup_kwargs = {
             'types-setuptools',
         ],
     },
-    'install_requires': [],
+    'install_requires': [
+        'ae_base',
+        'ae_dynamicod',
+        'ae_literal',
+    ],
     'keywords': [
         'configuration',
         'development',
@@ -77,7 +81,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/ae-group/ae_managed_files',
-    'version': '0.3.1',
+    'version': '0.3.2',
     'zip_safe': True,
 }
 
