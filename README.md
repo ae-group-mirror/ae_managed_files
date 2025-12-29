@@ -1,12 +1,12 @@
 <!-- THIS FILE IS EXCLUSIVELY MAINTAINED by the project ae.ae v0.3.101 -->
 <!-- THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.namespace_root_tpls v0.3.22 -->
-# managed_files 0.3.1
+# managed_files 0.3.2
 
 [![GitLab develop](https://img.shields.io/gitlab/pipeline/ae-group/ae_managed_files/develop?logo=python)](
     https://gitlab.com/ae-group/ae_managed_files)
 [![LatestPyPIrelease](
-    https://img.shields.io/gitlab/pipeline/ae-group/ae_managed_files/release0.3.1?logo=python)](
-    https://gitlab.com/ae-group/ae_managed_files/-/tree/release0.3.1)
+    https://img.shields.io/gitlab/pipeline/ae-group/ae_managed_files/release0.3.2?logo=python)](
+    https://gitlab.com/ae-group/ae_managed_files/-/tree/release0.3.2)
 [![PyPIVersions](https://img.shields.io/pypi/v/ae_managed_files)](
     https://pypi.org/project/ae-managed-files/#history)
 

@@ -24,7 +24,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.1'
+__version__ = '0.3.2'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template

@@ -1,1 +1,4 @@
 # runtime dependencies of the ae.managed_files project
+ae_base
+ae_dynamicod
+ae_literal
