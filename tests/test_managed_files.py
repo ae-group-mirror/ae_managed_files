@@ -591,16 +591,41 @@ class TestTemplateMngr:
         assert len(man.managed_files[0].comments) == 0
 
     def test_skip_lower_priority(self, tpl_dir):
-        dst_path = "dst_file_name.ext"
-        tpl_file_path = os_path_join(tpl_dir, 'tpl_file_name.ext')
-        write_file(tpl_file_path, tst_tpl_content)
+        dst_file = "dst_file_name.ext"
+        dst_path = REFRESHABLE_TEMPLATE_PATH_PFX + dst_file
+        tpl_file_path1 = os_path_join(tpl_dir, 'tpl_file_name.ext1')
+        write_file(tpl_file_path1, tst_tpl_content + 'tst_content_1')
+        tpl_file_path2 = os_path_join(tpl_dir, 'tpl_file_name.ext2')
+        write_file(tpl_file_path2, tst_tpl_content + 'tst_content_2')
+
         man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, dst_path),
-             (tst_patcher, tpl_file_path, dst_path)],
+            [(tst_patcher + '1', tpl_file_path1, dst_path),
+             (tst_patcher + '2', tpl_file_path2, dst_path)],
             DEFAULT_PATH_PREFIXES_PARSERS,
             tst_ctx_vars)
 
         assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files), "") == norm_path(dst_file)
+        mf = next(iter(man.deploy_files.values()))
+        assert mf.file_content.endswith('tst_content_1')
+        assert not mf.up_to_date
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 4    # 2 templates processed, 1st add/miss, 2nd lower-priority-skip
+        assert len(man.managed_files[0].comments) == 0
+
+        # same test again but with existing and identical destination file; check for mf.up_to_date flag
+        write_file(dst_file, patch_refreshable_content(dst_file, tst_tpl_content + 'tst_content_1', tst_patcher + '1'))
+
+        man = TemplateMngr(
+            [(tst_patcher + '1', tpl_file_path1, dst_path),
+             (tst_patcher + '2', tpl_file_path2, dst_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.deploy_files) == 1
+        mf = next(iter(man.deploy_files.values()))
+        assert mf.up_to_date
+        assert mf.file_content.endswith('tst_content_1')
         assert len(man.log_lines()) == 1
         assert len(man.log_lines(verbose=True)) == 4    # 2 templates processed, 1st add/miss, 2nd lower-priority-skip
         assert len(man.managed_files[0].comments) == 0
