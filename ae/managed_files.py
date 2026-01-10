@@ -24,7 +24,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.2'
+__version__ = '0.3.3'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -107,6 +107,7 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         self.comments: list[str] = []       #: to collect comments, errors and skip-reasons of this managed file
 
         self.refreshable = False            #: set to True in path prefix parser to allow to overwrite destination file
+        self.up_to_date = False             #: set to True if destination file is up-to-date
 
     def add_content_transformer(self, tf: ContentTransformer, extra_mode: str = '', encoding: str | None = None):
         """ add a content transformer callable to this managed file.
@@ -291,7 +292,8 @@ class TemplateMngr:
     def deploy(self):
         """ deploy all the missing/outdated managed files. """
         for mf in self.deploy_files.values():
-            mf.write_file_content()
+            if not mf.up_to_date:
+                mf.write_file_content()
 
     def log_lines(self, verbose: bool = False) -> list[str]:
         """ return a list of the log lines of all the managed/checked template files.
@@ -304,8 +306,10 @@ class TemplateMngr:
             dst_file_path = mf.dst_file_path
             tpl_file = mf.template_path if verbose else os_path_basename(mf.template_path)
             lines.append(f"    = {dst_file_path} from template {tpl_file} ({mf.patcher})")
-            if verbose and (not mf.skip_or_error or mf in self.deploy_files.values()):
-                lines.append(" " * 6 + "+ " + ("overwrite/refresh" if os_path_isfile(dst_file_path) else "add/miss"))
+            if verbose and not mf.skip_or_error:  # not skipped or mf in self.deploy_files.values() is up-to-date:
+                lines.append(" " * 6 + "+ " + ("up-to-date" if mf.up_to_date else
+                                               "overwrite/refresh" if os_path_isfile(dst_file_path) else
+                                               "add/miss"))
             for comment in mf.comments:
                 if verbose or comment.startswith(MANAGED_FILE_ERROR_COMMENT):
                     lines.append(" " * 6 + comment)
@@ -314,14 +318,14 @@ class TemplateMngr:
     @property
     def missing_files(self) -> set[str]:
         """ return a set of destination file paths of the missing files created from templates. """
-        return set(dst_file_path for mf in self.managed_files
-                   if not os_path_isfile(dst_file_path := mf.dst_file_path) and not mf.skip_or_error)
+        return set(dst_path for mf in self.managed_files
+                   if not os_path_isfile(dst_path := mf.dst_file_path) and not mf.skip_or_error and not mf.up_to_date)
 
     @property
     def outdated_files(self) -> list[tuple[str, ContentType, ContentType]]:
         """ list of tuples of destination file path, new, and old file contents for each outdated refreshable file. """
         return [(dst_file_path, mf.file_content, mf.old_content) for mf in self.managed_files
-                if os_path_isfile(dst_file_path := mf.dst_file_path) and not mf.skip_or_error]
+                if os_path_isfile(dst_file_path := mf.dst_file_path) and not mf.skip_or_error and not mf.up_to_date]
 
     @property
     def path_prefixes_arg_counts(self) -> PathPrefixesArgCounts:
@@ -357,7 +361,7 @@ def deploy_template(template_file_path: str, dst_path: str = ".", patcher: str =
                        prefixes_parsers or DEFAULT_PATH_PREFIXES_PARSERS,
                        tpl_vars or {})
     man.deploy()
-    return next(iter(man.deploy_files), "")
+    return next(iter(dst_path for dst_path, mf in man.deploy_files.items() if not mf.up_to_date), "")
 
 
 def patch_refreshable_content(file_name: str, content: str, patcher: str) -> str:
@@ -526,7 +530,7 @@ def transform_refreshable_content(managed_file: ManagedFile) -> str:
                                             cast(str, managed_file.file_content),
                                             managed_file.patcher)
     if old_content == new_content:
-        managed_file.skip("refreshable destination file is up-to-date")
-        return ""
+        # no managed_file.skip("is up-to-date") to allow lower-priority-skip of later template for same destination file
+        managed_file.up_to_date = True
 
     return new_content
