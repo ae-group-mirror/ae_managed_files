@@ -590,6 +590,26 @@ class TestTemplateMngr:
         assert len(man.log_lines(verbose=True)) == 2
         assert len(man.managed_files[0].comments) == 0
 
+    def test_representations(self, tpl_dir):
+        dst_path = "dst_file_name.ext"
+        tpl_file_path = os_path_join(tpl_dir, dst_path)     # source == dest
+        write_file(tpl_file_path, tst_tpl_content)
+        man = TemplateMngr(
+            [(tst_patcher, tpl_file_path, dst_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        man_repr = repr(man)
+        assert hex(id(man)) in man_repr
+
+        fil_repr = repr(man.managed_files[0])
+        assert hex(id(man.managed_files[0])) in fil_repr
+        assert dst_path in fil_repr
+        assert tst_patcher in fil_repr
+        assert 'skip_or_error' in fil_repr
+        assert 'refreshable' not in fil_repr
+        assert 'up_to_date' not in fil_repr
+
     def test_skip_lower_priority(self, tpl_dir):
         dst_file = "dst_file_name.ext"
         dst_path = REFRESHABLE_TEMPLATE_PATH_PFX + dst_file

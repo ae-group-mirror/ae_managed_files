@@ -81,7 +81,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/ae-group/ae_managed_files',
-    'version': '0.3.3',
+    'version': '0.3.4',
     'zip_safe': True,
 }
 
