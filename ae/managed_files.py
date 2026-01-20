@@ -24,7 +24,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.3'
+__version__ = '0.3.4'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -108,6 +108,11 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
         self.refreshable = False            #: set to True in path prefix parser to allow to overwrite destination file
         self.up_to_date = False             #: set to True if destination file is up-to-date
+
+    def __repr__(self):
+        """ show destination path, patcher and attributes of this managed file. """
+        attrs = "/".join([_ for _ in ('refreshable', 'up_to_date', 'skip_or_error') if getattr(self, _)])
+        return f"{self.__class__.__name__}:{hex(id(self))} {self._dst_file_path} {self.patcher} {attrs}"
 
     def add_content_transformer(self, tf: ContentTransformer, extra_mode: str = '', encoding: str | None = None):
         """ add a content transformer callable to this managed file.
@@ -283,6 +288,12 @@ class TemplateMngr:
                     mf.content_transformations()
                     if not mf.skip_or_error:
                         self.deploy_files[dst_file_path] = mf
+
+    def __repr__(self):
+        """ show deployed, deployable and managed file counts. """
+        return (f"{self.__class__.__name__}:{hex(id(self))}"
+                f" {sum(_mf.up_to_date for _mf in self.deploy_files.values())} up-to-date of"
+                f" {len(self.deploy_files)} deployable of {len(self.managed_files)} managed files")
 
     @property
     def checked_files(self) -> set[str]:
