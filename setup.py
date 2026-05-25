@@ -1,4 +1,4 @@
-# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.72
+# THIS FILE IS EXCLUSIVELY MAINTAINED by the project aedev.project_tpls v0.3.78
 """ setup of ae namespace module portion managed_files: managed files. """
 import sys
 # noinspection PyUnresolvedReferences
@@ -28,26 +28,22 @@ setup_kwargs = {
             'aedev_project_tpls',
             'ae_ae',
             'anybadge',
-            'coverage-badge',
             'flake8',
             'mypy',
             'pylint',
             'pytest',
             'pytest-cov',
-            'pytest-django',
             'typing',
             'types-setuptools',
         ],
         'docs': [],
         'tests': [
             'anybadge',
-            'coverage-badge',
             'flake8',
             'mypy',
             'pylint',
             'pytest',
             'pytest-cov',
-            'pytest-django',
             'typing',
             'types-setuptools',
         ],
@@ -81,7 +77,7 @@ setup_kwargs = {
     },
     'python_requires': '>=3.12',
     'url': 'https://gitlab.com/ae-group/ae_managed_files',
-    'version': '0.3.4',
+    'version': '0.3.5',
     'zip_safe': True,
 }
 

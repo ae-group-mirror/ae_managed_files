@@ -2,50 +2,59 @@
 managed files
 =============
 
-this portion of the ``ae`` namespace creates files from templates, to maintain and keep similar files up-to-date.
-files that are mostly identical, like e.g. the license or contribution info of your software projects, can
-automatically be checked and renewed. variations in the file content, like the name and version of a concrete project,
-are getting replaced dynamically with actual values from project-specific context variables.
+this portion of the ``ae`` namespace is creating or refreshing files from templates.
 
-template files are dynamically compiled into destination files, by evaluating embedded f-string-expressions or
-special replacers. replacers are useful especially to generate python code files because they are syntactically
-treated as comments in the template file, replaceable by code statements or code snippets from external files.
+the update strategy can be individually configured for every template folder and file.
 
-use the function :func:`deploy_template` to convert a single template into a destination file. fpr bulk destination
-file deployments from multiple templates, use the :class:`TemplateMngr` class.
+the engine to convert templates into destination files is designed to be easily extendable
+(see the :mod:`~aedev.project_manager.templates` module).
+
+variations in the file content, like the name and version of a concrete project,
+can be dynamically replaced with actual values from individual context variables, either by
+embedded f-string-expressions or by replacers/placeholders. replacers are useful especially
+for Python code file templates because they are get syntactically interpreted as Python comments
+in the template file, and could get replaced by Python code statements in the resulting destination file.
+
+use the function :func:`deploy_template` to convert a single template into a destination file.
+for bulk destination file deployments from multiple templates, use the :class:`TemplateMngr` class.
 """
 import os
 from typing import Any, Callable, Iterable, Optional, Protocol, cast, runtime_checkable
 
 from ae.base import (                                                                       # type: ignore
-    UNSET,
-    norm_path, os_path_basename, os_path_isfile, os_path_join, os_path_splitext, read_file, write_file)
+    norm_path, os_path_basename, os_path_isfile, os_path_join, os_path_splitext,
+    read_bin_file, read_file, write_bin_file, write_file)
 from ae.dynamicod import try_eval                                                           # type: ignore
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.4'
+__version__ = '0.3.5'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
+PATH_PREFIXES_ARGS_SEP = '_'                            #: seperator/suffix of template file/path prefixes arguments
+F_STRINGS_PATH_PFX = 'fSt-'                             #: file name prefix if template contains f-strings
 
-F_STRINGS_PATH_PFX = 'de_tpl_'                          #: file name prefix if template contains f-strings
+# adding one of the following template path/file name prefixes will allow to replace the destination file
+OVERWRITABLE_BIN_TEMPLATE_PATH_PFX = 'Obi-'
+""" template file name prefix of a binary file that will get overwritten if it exists at their destination. """
+OVERWRITABLE_TEMPLATE_PATH_PFX = 'Ovw-'
+""" template file name prefix of a text file that will get overwritten if it exists at their destination. """
+PUTTABLE_TEMPLATE_PATH_PFX = 'PutMar-'
+""" template file name prefix of a text file that will get created if it not exists at their destination
+and replaced/updated if it contains a :data:`REFRESHABLE_TEMPLATE_MARKER`. """
+UPDATABLE_TEMPLATE_PATH_PFX = 'UpdMar-'
+""" template file name prefix of an update-only text file, that get updated only if it already exists at their
+destination and contains a :data:`REFRESHABLE_TEMPLATE_MARKER`. """
 
-MANAGED_FILE_ENCODING = None                            #: managed file default read/write encoding
-MANAGED_FILE_EXTRA_MODE = 'b'                           #: managed file default read/write extra mode (binary)
+STOP_PARSING_PATH_PFX = '_z_'                           #: file name prefix to support template of template
+
+REFRESHABLE_TEMPLATE_MARKER = 'THIS FILE IS EXCLUSIVELY MAINTAINED'
+""" to mark the content (header) of a refreshable/overwritable text file that gets updated/replaced from a template. """
 
 MANAGED_FILE_ERROR_COMMENT = '* error: '                #: managed file error comment marker
 MANAGED_FILE_SKIP_COMMENT = '- skip reason: '           #: managed file skip-reason comment marker
 MANAGED_FILE_WARNING_COMMENT = '# '                     #: managed file warning comment marker
-
-PATH_PREFIXES_ARGS_SEP = '_'                            #: seperator/suffix of template file/path prefixes arguments
-
-REFRESHABLE_TEMPLATE_MARKER = 'THIS FILE IS EXCLUSIVELY MAINTAINED'
-""" to mark the content (header) of a refreshable project file that gets created and updated from a template. """
-REFRESHABLE_TEMPLATE_PATH_PFX = 'de_otf_'
-""" file name prefix of an refreshable/externally maintained file, that get created and updated from a template. """
-
-STOP_PARSING_PATH_PFX = '_z_'                           #: file name prefix to support template of template
 
 TEMPLATE_PLACEHOLDER_ID_PREFIX = "# "                   #: template replacers id prefix marker
 TEMPLATE_PLACEHOLDER_ID_SUFFIX = "#("                   #: template replacers id suffix marker
@@ -56,16 +65,21 @@ TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID = "ReplaceWith"    #: replacers id of :func
 
 # types ---------------------------------------------------------------------------------------------------------------
 
-ContentTransformer = Callable[['ManagedFile'], str]     #: text file content transformer function
-ContentType = str | bytes | None                        #: content type of managed file (None==file-not-exists)
+type ContentTransformer = Callable[['ManagedFile'], str | bytes]  #: file content transformer function
+type ContentType = str | bytes | None                   #: content type of managed file (None==file-not-exists)
 
-ContextVars = dict[str, Any]                            #: template placeholder variables to be replaced by its value
+type ContextVars = dict[str, Any]                       #: template placeholder variables to be replaced by its value
+
+type OutdatedFilesPathsContents = list[tuple[str, ContentType, ContentType]]
+""" type of the value returned by the property :attr:`~TemplateMngr.outdated_files` of :class:`TemplateMngr` """
 
 
+# PathPrefixesFunc = Callable[['ManagedFile', ...], None] does not support multiple *args
 # pylint: disable=missing-class-docstring,too-few-public-methods
-@runtime_checkable  # PathPrefixesFunc = Callable[['ManagedFile'], None] does not support multiple *args
+@runtime_checkable
 class PathPrefixesFunc(Protocol):                       #: path prefixes parser function
-    def __call__(self, managed_file: 'ManagedFile', *path_prefix_args: str) -> None: ...
+    # the / before *path_prefix_args marks parameters to its left as positional-only, ignoring the name mismatch. """
+    def __call__(self, managed_file: 'ManagedFile', /, *path_prefix_args: str) -> None: ...
 
 
 PathPrefixesParsers = dict[str, tuple[int, PathPrefixesFunc]]  #: registered path prefixes parsers
@@ -93,52 +107,57 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         self.manager = manager
         self.patcher = patcher
         self.template_path = template_path
+
+        self._content_transformers: list[ContentTransformer] = []
         self._dst_file_path = patch_string(dst_path, manager.context_vars)
         self._dst_path_stripped = False
         self._dst_path_extension = ""
 
-        self._content_transformers: list[ContentTransformer] = []
-
-        self.file_content: ContentType = None
-        self._file_encoding = UNSET
-        self._file_mode = UNSET
-        self.old_content: ContentType = None     #: old dst file content loaded if unskipped in path prefixes
-
         self.comments: list[str] = []       #: to collect comments, errors and skip-reasons of this managed file
 
-        self.refreshable = False            #: set to True in path prefix parser to allow to overwrite destination file
-        self.up_to_date = False             #: set to True if destination file is up-to-date
+        self.file_encoding: str | None = None
+        """ encoding of this managed file set via :meth:`ManagedFile.add_content_transformer`; default='bin-bytes' """
+
+        self.file_content: ContentType = None
+        self.old_content: ContentType = None    #: old dst file content loaded if unskipped in path prefixes
+
+        self.is_refreshable = False         #: set to True in path prefix parser to allow to overwrite destination file
+        self.is_up_to_date = False          #: set to True if destination file is up-to-date
 
     def __repr__(self):
         """ show destination path, patcher and attributes of this managed file. """
-        attrs = "/".join([_ for _ in ('refreshable', 'up_to_date', 'skip_or_error') if getattr(self, _)])
+        attrs = "/".join([_ for _ in ('is_refreshable', 'is_up_to_date', 'skip_or_error') if getattr(self, _)])
         return f"{self.__class__.__name__}:{hex(id(self))} {self._dst_file_path} {self.patcher} {attrs}"
 
-    def add_content_transformer(self, tf: ContentTransformer, extra_mode: str = '', encoding: str | None = None):
+    def add_content_transformer(self, tf: ContentTransformer, encoding: str | None = None):
         """ add a content transformer callable to this managed file.
 
         :param tf:              content transformer callable, to be called with this instance as argument and returning
                                 the new/transformed content.
-        :param extra_mode:      extra file mode (passed to :func:`~ae.base.read_file`/:func:`~ae.base.write_file`).
-        :param encoding:        content encoding (passed to :func:`~ae.base.read_file`/:func:`~ae.base.write_file`).
+        :param encoding:        text file content encoding or None (like passed to the built-in :func:`open` function);
+                                or specify 'bin-bytes' to add a binary transformer (bytes file content).
         """
-        if self._file_mode not in (UNSET, extra_mode):
-            self.error(f"file extra mode mismatch {extra_mode=} != {self._file_mode=}")
-        self._file_mode = extra_mode
-
-        if self._file_encoding not in (UNSET, encoding):
-            self.error(f"file encoding mismatch {encoding=} != {self._file_encoding=}")
-        self._file_encoding = encoding
+        if self.file_encoding not in (None, encoding):
+            self.error(f"file encoding mismatch {encoding=} != {self.file_encoding=}")
+        self.file_encoding = encoding
 
         self._content_transformers.append(tf)
 
     def content_transformations(self):
         """ load the file contents of the source and destination file and run all the collected content transformers """
+        encoding = self.file_encoding
+
         if self.file_content is None:
-            self.file_content = read_file(self.template_path, extra_mode=self.file_mode, encoding=self.file_encoding)
+            if encoding == 'bin-bytes':
+                self.file_content = read_bin_file(self.template_path)
+            else:
+                self.file_content = read_file(self.template_path, encoding=encoding)
 
         if self.old_content is None and os_path_isfile(dst_file_path := self.dst_file_path):
-            self.old_content = read_file(dst_file_path, extra_mode=self.file_mode, encoding=self.file_encoding)
+            if encoding == 'bin-bytes':
+                self.old_content = read_bin_file(dst_file_path)
+            else:
+                self.old_content = read_file(dst_file_path, encoding=encoding)
 
         for content_transformer in self._content_transformers:
             self.file_content = content_transformer(self)
@@ -168,16 +187,6 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         """
         self.comments.append(MANAGED_FILE_ERROR_COMMENT + message)
 
-    @property
-    def file_encoding(self) -> str | None:
-        """ return the encoding of this managed file. """
-        return MANAGED_FILE_ENCODING if self._file_mode is UNSET else self._file_encoding
-
-    @property
-    def file_mode(self) -> str:
-        """ return the file mode of this managed file. """
-        return MANAGED_FILE_EXTRA_MODE if self._file_mode is UNSET else self._file_mode
-
     def process_path_prefixes(self) -> bool:
         """ parse, reduce and call back the template file name/path prefixes to check for early deploy skip or errors.
 
@@ -189,18 +198,9 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
         stripped_dst_path, prefixes_args = prefix_parser(self._dst_file_path, arg_counts, args_sep=prefixes_args_sep)
 
-        refreshable_args = None
         for prefix, args in prefixes_args:
-            if prefix == REFRESHABLE_TEMPLATE_PATH_PFX:
-                if refreshable_args is not None:
-                    self.warning(f"ignoring multiple {REFRESHABLE_TEMPLATE_PATH_PFX=} in {self._dst_file_path}")
-                refreshable_args = args     # postpone call of refreshable content check to have the final file content
-                continue
             func = prefixes_parsers[prefix][1]
             func(self, *args)
-
-        if refreshable_args is not None:
-            prefixes_parsers[REFRESHABLE_TEMPLATE_PATH_PFX][1](self, *refreshable_args)
 
         self._dst_file_path = os_path_join(self._dst_path_extension, stripped_dst_path)
         self._dst_path_stripped = True
@@ -227,8 +227,12 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
     def write_file_content(self):
         """ deploy file content of this managed file to its :attr:`dst_file_path`, creating not-existing folders. """
-        write_file(self.dst_file_path, self.file_content,
-                   extra_mode=self.file_mode, encoding=self.file_encoding, make_dirs=True)
+        if (encoding := self.file_encoding) == 'bin-bytes':
+            # noinspection PyTypeChecker
+            write_bin_file(self.dst_file_path, self.file_content, make_dirs=True)
+        else:
+            # noinspection PyTypeChecker
+            write_file(self.dst_file_path, self.file_content, encoding=encoding, make_dirs=True)
 
 
 class TemplateMngr:
@@ -279,9 +283,9 @@ class TemplateMngr:
             if mf.process_path_prefixes():
                 dst_file_path = norm_path(mf.dst_file_path)
                 if os_path_isfile(dst_file_path + DEPLOY_LOCK_EXT):
-                    mf.skip("destination .locked file exists")
-                elif not mf.refreshable and os_path_isfile(dst_file_path):
-                    mf.skip("destination file of this not refreshable template already exists")
+                    mf.skip(f"destination file '{dst_file_path}.locked' exists")
+                elif not mf.is_refreshable and os_path_isfile(dst_file_path):
+                    mf.skip("not overwritable destination file already exists")
                 elif dst_file_path in self.deploy_files:
                     mf.skip(f"lower priority than {self.deploy_files[dst_file_path].template_path}")
                 else:
@@ -292,7 +296,7 @@ class TemplateMngr:
     def __repr__(self):
         """ show deployed, deployable and managed file counts. """
         return (f"{self.__class__.__name__}:{hex(id(self))}"
-                f" {sum(_mf.up_to_date for _mf in self.deploy_files.values())} up-to-date of"
+                f" {sum(_mf.is_up_to_date for _mf in self.deploy_files.values())} up-to-date of"
                 f" {len(self.deploy_files)} deployable of {len(self.managed_files)} managed files")
 
     @property
@@ -303,7 +307,7 @@ class TemplateMngr:
     def deploy(self):
         """ deploy all the missing/outdated managed files. """
         for mf in self.deploy_files.values():
-            if not mf.up_to_date:
+            if not mf.is_up_to_date:
                 mf.write_file_content()
 
     def log_lines(self, verbose: bool = False) -> list[str]:
@@ -318,7 +322,7 @@ class TemplateMngr:
             tpl_file = mf.template_path if verbose else os_path_basename(mf.template_path)
             lines.append(f"    = {dst_file_path} from template {tpl_file} ({mf.patcher})")
             if verbose and not mf.skip_or_error:  # not skipped or mf in self.deploy_files.values() is up-to-date:
-                lines.append(" " * 6 + "+ " + ("up-to-date" if mf.up_to_date else
+                lines.append(" " * 6 + "+ " + ("up-to-date" if mf.is_up_to_date else
                                                "overwrite/refresh" if os_path_isfile(dst_file_path) else
                                                "add/miss"))
             for comment in mf.comments:
@@ -330,13 +334,15 @@ class TemplateMngr:
     def missing_files(self) -> set[str]:
         """ return a set of destination file paths of the missing files created from templates. """
         return set(dst_path for mf in self.managed_files
-                   if not os_path_isfile(dst_path := mf.dst_file_path) and not mf.skip_or_error and not mf.up_to_date)
+                   if not os_path_isfile(dst_path := mf.dst_file_path)  # performance: cache slow dst_file_path property
+                   and not mf.skip_or_error and not mf.is_up_to_date)
 
     @property
-    def outdated_files(self) -> list[tuple[str, ContentType, ContentType]]:
-        """ list of tuples of destination file path, new, and old file contents for each outdated refreshable file. """
+    def outdated_files(self) -> OutdatedFilesPathsContents:
+        """ list of tuples of destination file path, new, and old file contents for each outdated file. """
         return [(dst_file_path, mf.file_content, mf.old_content) for mf in self.managed_files
-                if os_path_isfile(dst_file_path := mf.dst_file_path) and not mf.skip_or_error and not mf.up_to_date]
+                if os_path_isfile(dst_file_path := mf.dst_file_path)    # performance: cache slow dst_file_path property
+                and not mf.skip_or_error and not mf.is_up_to_date]
 
     @property
     def path_prefixes_arg_counts(self) -> PathPrefixesArgCounts:
@@ -372,11 +378,11 @@ def deploy_template(template_file_path: str, dst_path: str = ".", patcher: str =
                        prefixes_parsers or DEFAULT_PATH_PREFIXES_PARSERS,
                        tpl_vars or {})
     man.deploy()
-    return next(iter(dst_path for dst_path, mf in man.deploy_files.items() if not mf.up_to_date), "")
+    return next(iter(dst_path for dst_path, mf in man.deploy_files.items() if not mf.is_up_to_date), "")
 
 
-def patch_refreshable_content(file_name: str, content: str, patcher: str) -> str:
-    """ create/update the content of a refreshable text file with placeholders (compiled from a template file).
+def extend_content_with_marker(file_name: str, content: str, patcher: str) -> str:
+    """ create/update the content of an overwritable text file with placeholders (compiled from a template file).
 
     :param file_name:           the name (and path) of the file to create/update/patch.
     :param content:             the content of the file (without the placeholder template marker).
@@ -412,11 +418,13 @@ def patch_string(content: str, tpl_vars: ContextVars, **replacers: Replacer) -> 
     content = try_eval('f"""' + content.replace('"""', r'\"\"\"') + '"""', glo_vars=tpl_vars)
     if not content:
         return ""
+    # noinspection PyUnresolvedReferences
     content = content.replace(r'\"\"\"', '"""')     # recover docstring delimiters
 
     suffix = TEMPLATE_PLACEHOLDER_ARGS_SUFFIX
     len_suf = len(suffix)
     all_replacers = DEFAULT_REPLACERS
+    # noinspection PyTypeChecker
     all_replacers.update(replacers)
     for key, fun in all_replacers.items():
         prefix = TEMPLATE_PLACEHOLDER_ID_PREFIX + key + TEMPLATE_PLACEHOLDER_ID_SUFFIX
@@ -438,26 +446,66 @@ def patch_string(content: str, tpl_vars: ContextVars, **replacers: Replacer) -> 
     return content
 
 
-def path_pfx_parametrize_with_context(managed_file: ManagedFile, *_args: str):
+def _path_pfx_check_single_refreshable(mf: ManagedFile) -> None:
+    assert not mf.is_refreshable, f"multiple path prefixes setting is_refreshable for template {mf.template_path=}"
+
+
+def path_pfx_parametrize_with_context(mf: ManagedFile, *_args: str):
     """ path prefix callee for the :data:`F_STRINGS_PATH_PFX` prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     """
-    managed_file.add_content_transformer(transform_parametrize_content)
+    mf.add_content_transformer(transform_parametrize_content)
 
 
-def path_pfx_refreshable_content(managed_file: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`REFRESHABLE_TEMPLATE_PATH_PFX` prefix.
+def path_pfx_overwritable_binary_content(mf: ManagedFile, *_args: str):
+    """ path prefix callee for the :data:`OVERWRITABLE_BIN_TEMPLATE_PATH_PFX` prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     """
-    managed_file.refreshable = True
-    managed_file.add_content_transformer(transform_refreshable_content)  # postpone check of REFRESHABLE_TEMPLATE_MARKER
+    def _pass_content_unchanged(_mf: ManagedFile) -> bytes:
+        assert isinstance(_mf.file_content, bytes)  # ensured by add_content_transformer(encoding='bin-bytes'); for mypy
+        return _mf.file_content
+    _path_pfx_check_single_refreshable(mf)
+    mf.is_refreshable = True
+    mf.add_content_transformer(_pass_content_unchanged, encoding='bin-bytes')
+
+
+def path_pfx_overwritable_content(mf: ManagedFile, *_args: str):
+    """ path prefix callee for the :data:`OVERWRITABLE_TEMPLATE_PATH_PFX` prefix.
+
+    :param mf:                  ManagedFile instance.
+    """
+    _path_pfx_check_single_refreshable(mf)
+    mf.is_refreshable = True
+
+
+def path_pfx_puttable_content(mf: ManagedFile, *_args: str):
+    """ path prefix callee for the :data:`PUTTABLE_TEMPLATE_PATH_PFX` prefix.
+
+    :param mf:                  ManagedFile instance.
+    """
+    _path_pfx_check_single_refreshable(mf)
+    mf.is_refreshable = True
+    mf.add_content_transformer(transform_puttable_content)    # postpone check of REFRESHABLE_TEMPLATE_MARKER
+
+
+def path_pfx_updatable_content(mf: ManagedFile, *_args: str):
+    """ path prefix callee for the :data:`UPDATABLE_TEMPLATE_PATH_PFX` prefix.
+
+    :param mf:                  ManagedFile instance.
+    """
+    _path_pfx_check_single_refreshable(mf)
+    mf.is_refreshable = True
+    mf.add_content_transformer(transform_updatable_content)   # postpone check of UPDATABLE_TEMPLATE_MARKER
 
 
 DEFAULT_PATH_PREFIXES_PARSERS: PathPrefixesParsers = {
+    OVERWRITABLE_BIN_TEMPLATE_PATH_PFX: (0, path_pfx_overwritable_binary_content),
+    OVERWRITABLE_TEMPLATE_PATH_PFX: (0, path_pfx_overwritable_content),
+    PUTTABLE_TEMPLATE_PATH_PFX: (0, path_pfx_puttable_content),
+    UPDATABLE_TEMPLATE_PATH_PFX: (0, path_pfx_updatable_content),
     F_STRINGS_PATH_PFX: (0, path_pfx_parametrize_with_context),
-    REFRESHABLE_TEMPLATE_PATH_PFX: (0, path_pfx_refreshable_content),
 }
 """ mapping of the default path prefixes parsers with to a tuple of the prefix args count and the parser callee. """
 
@@ -483,6 +531,7 @@ def prefix_parser(dst_path: str, prefixes_arg_counts: PathPrefixesArgCounts, arg
             name_rest = args_and_rest[-1]
         parts.append("".join([name_rest] + name_suffixes))
 
+    # noinspection PyTypeChecker
     return os_path_join(*parts), prefixes_args
 
 
@@ -504,7 +553,7 @@ def replace_with_template_args(args_str: str) -> str:
     """ template placeholder replacer function to hide uncompleted code from code-inspections/editor-warnings.
 
     :param args_str:            args string to return, replacing the template placeholder (interpreted as comment in
-                                python code).
+                                Python code).
     :return:                    args string specified as argument of the :data:`TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID`.
     """
     return args_str
@@ -517,31 +566,55 @@ DEFAULT_REPLACERS = {
 """ map of default replacers callables used by :func:`patch_string`. """
 
 
-def transform_parametrize_content(managed_file: ManagedFile) -> str:
+def transform_parametrize_content(mf: ManagedFile) -> str:
     """ content transformer callee added via the :data:`F_STRINGS_PATH_PFX` path prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
     """
-    manager = managed_file.manager
-    return patch_string(cast(str, managed_file.file_content), manager.context_vars, **manager.replacers)
+    manager = mf.manager
+    return patch_string(cast(str, mf.file_content), manager.context_vars, **manager.replacers)
 
 
-def transform_refreshable_content(managed_file: ManagedFile) -> str:
-    """ content transformer callee added via the :data:`REFRESHABLE_TEMPLATE_PATH_PFX` path prefix.
+def transform_puttable_content(mf: ManagedFile) -> str:
+    """ content transformer callee added via the :data:`PUTTABLE_TEMPLATE_PATH_PFX` path prefix.
 
-    :param managed_file:        ManagedFile instance.
+    :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
     """
-    if (old_content := managed_file.old_content) and REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
-        managed_file.skip("missing refreshable content marker in destination file")
+    if (old_content := mf.old_content) and REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
+        mf.skip("missing refreshable content marker in destination file")
         return ""
 
-    new_content = patch_refreshable_content(managed_file.dst_file_path,
-                                            cast(str, managed_file.file_content),
-                                            managed_file.patcher)
+    new_content = extend_content_with_marker(mf.dst_file_path,
+                                             cast(str, mf.file_content),
+                                             mf.patcher)
     if old_content == new_content:
         # no managed_file.skip("is up-to-date") to allow lower-priority-skip of later template for same destination file
-        managed_file.up_to_date = True
+        mf.is_up_to_date = True
+
+    return new_content
+
+
+def transform_updatable_content(mf: ManagedFile) -> str:
+    """ content transformer callee added via the :data:`UPDATABLE_TEMPLATE_PATH_PFX` path prefix.
+
+    :param mf:                  ManagedFile instance.
+    :return:                    transformed file content.
+    """
+    old_content = mf.old_content
+    if old_content is None:
+        mf.skip("destination file does not exist")
+        return ""
+    if REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
+        mf.skip("missing refreshable content marker in destination file")
+        return ""
+
+    new_content = extend_content_with_marker(mf.dst_file_path,
+                                             cast(str, mf.file_content),
+                                             mf.patcher)
+    if old_content == new_content:
+        # no managed_file.skip("is up-to-date") to allow lower-priority-skip of later template for same destination file
+        mf.is_up_to_date = True
 
     return new_content
