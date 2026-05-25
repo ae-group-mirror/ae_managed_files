@@ -4,19 +4,20 @@ import os
 import pytest
 from mypy.util import os_path_join
 
-from ae.base import norm_path, os_path_isfile, os_path_join, read_file, write_file
+from ae.base import norm_path, os_path_isfile, os_path_join, read_bin_file, read_file, write_bin_file, write_file
+
 
 from ae.managed_files import (
-    DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT,
-    F_STRINGS_PATH_PFX, REFRESHABLE_TEMPLATE_PATH_PFX, STOP_PARSING_PATH_PFX,
+    DEFAULT_PATH_PREFIXES_PARSERS, DEPLOY_LOCK_EXT, F_STRINGS_PATH_PFX, MANAGED_FILE_ERROR_COMMENT,
+    OVERWRITABLE_BIN_TEMPLATE_PATH_PFX, OVERWRITABLE_TEMPLATE_PATH_PFX, PATH_PREFIXES_ARGS_SEP,
+    PUTTABLE_TEMPLATE_PATH_PFX, REFRESHABLE_TEMPLATE_MARKER, STOP_PARSING_PATH_PFX,
     TEMPLATE_PLACEHOLDER_ID_PREFIX, TEMPLATE_PLACEHOLDER_ID_SUFFIX, TEMPLATE_PLACEHOLDER_ARGS_SUFFIX,
-    TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID, TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID,
-    ManagedFile, TemplateMngr,
-    deploy_template, patch_refreshable_content, patch_string,
-    path_pfx_parametrize_with_context, path_pfx_refreshable_content,
+    TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID, TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID, UPDATABLE_TEMPLATE_PATH_PFX,
+    ManagedFile, PathPrefixesParsers, TemplateMngr,
+    deploy_template, extend_content_with_marker, patch_string,
+    path_pfx_parametrize_with_context, path_pfx_puttable_content, path_pfx_updatable_content,
     prefix_parser, replace_with_file_content_or_default, replace_with_template_args,
-    transform_parametrize_content, transform_refreshable_content,
-    REFRESHABLE_TEMPLATE_MARKER, MANAGED_FILE_ERROR_COMMENT, PATH_PREFIXES_ARGS_SEP)
+    transform_parametrize_content, transform_puttable_content, transform_updatable_content)
 
 
 tst_patcher = 'tst_patcher'
@@ -24,11 +25,12 @@ tst_ctx_vars = {'var_name': "_var_value"}
 tst_prefix_arg1 = 'pre-fix-arg1'
 tst_prefix_arg2 = 'pre-fix-arg2'
 tst_tpl_name_rest = "rest{var_name}.tpl"
-tst_tpl_file_name = F_STRINGS_PATH_PFX + REFRESHABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+tst_tpl_file_name_puttable = F_STRINGS_PATH_PFX + PUTTABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+tst_tpl_file_name_updatable = UPDATABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + tst_tpl_name_rest
 tst_dst_file_name = tst_tpl_name_rest.format(**tst_ctx_vars)
 tst_tpl_content = "# template file content with {var_name}."
 tst_dst_ends_content = tst_tpl_content.format(**tst_ctx_vars)
-tst_dst_full_content = patch_refreshable_content("", tst_dst_ends_content, tst_patcher)
+tst_dst_full_content = extend_content_with_marker("", tst_dst_ends_content, tst_patcher)
 
 
 def tst_prefix_args_parser(mf: ManagedFile, *args: str):
@@ -38,8 +40,9 @@ def tst_prefix_args_parser(mf: ManagedFile, *args: str):
 
 
 TST_ARGS_PREFIX = "tst_args_"
-TST_PREFIX_PARSERS = {**DEFAULT_PATH_PREFIXES_PARSERS,
-                      TST_ARGS_PREFIX: (2, tst_prefix_args_parser)}
+TST_PREFIX_PARSERS: PathPrefixesParsers = {
+    **DEFAULT_PATH_PREFIXES_PARSERS,
+    TST_ARGS_PREFIX: (2, tst_prefix_args_parser)}
 
 
 @pytest.fixture
@@ -49,19 +52,56 @@ def tpl_dir(tmp_path, monkeypatch):
     return tmp_dir
 
 
-@pytest.fixture
-def man_tst(tpl_dir):
-    tpl_file_name = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + STOP_PARSING_PATH_PFX + tst_tpl_file_name
+@pytest.fixture(params=[OVERWRITABLE_TEMPLATE_PATH_PFX, PUTTABLE_TEMPLATE_PATH_PFX, UPDATABLE_TEMPLATE_PATH_PFX],
+                ids=["overwritable", "puttable", "updatable"])
+def path_pfx(request):
+    return request.param
+
+
+@pytest.fixture(params=[OVERWRITABLE_TEMPLATE_PATH_PFX, PUTTABLE_TEMPLATE_PATH_PFX, UPDATABLE_TEMPLATE_PATH_PFX],
+                ids=["overwritable", "puttable", "updatable"])
+def man_tst(request, tpl_dir):
+    """ TemplateMngr instance parametrized as with overwritable+puttable+updatable of a template's template. """
+    tpl_file_name = request.param + F_STRINGS_PATH_PFX + STOP_PARSING_PATH_PFX + tst_tpl_file_name_puttable
     tpl_file_path = os_path_join(tpl_dir, 'source', tpl_file_name)
     write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
     dst_file_path = os_path_join("dst_dir", tpl_file_name)
-    dst_strip_path = os_path_join("dst_dir", tst_tpl_file_name).format(**tst_ctx_vars)
+    dst_strip_path = os_path_join("dst_dir", tst_tpl_file_name_puttable).format(**tst_ctx_vars)
     write_file(os_path_join(tpl_dir, dst_strip_path), REFRESHABLE_TEMPLATE_MARKER, make_dirs=True)
 
     return TemplateMngr([(tst_patcher, tpl_file_path, dst_file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
 
 
 class TestPathPrefixParsers:
+    def test_multiple_refreshable_prefixes(self, tpl_dir):
+        file_path = os_path_join(tpl_dir, OVERWRITABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest)
+        write_file(file_path, 'tst_c_o_n_t_e_n_t')
+        TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = OVERWRITABLE_BIN_TEMPLATE_PATH_PFX + OVERWRITABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = OVERWRITABLE_BIN_TEMPLATE_PATH_PFX + PUTTABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = OVERWRITABLE_BIN_TEMPLATE_PATH_PFX + UPDATABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = OVERWRITABLE_TEMPLATE_PATH_PFX + PUTTABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = OVERWRITABLE_TEMPLATE_PATH_PFX + UPDATABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
+        file_path = PUTTABLE_TEMPLATE_PATH_PFX + UPDATABLE_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
+            TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
+
     def test_path_pfx_parametrize_with_context(self, man_tst):
         mf = man_tst.managed_files[0]
         assert mf._content_transformers.count(transform_parametrize_content) == 1
@@ -72,62 +112,100 @@ class TestPathPrefixParsers:
 
     def test_path_pfx_parametrize_with_context_adding_content_transformer(self, man_tst):
         mf = man_tst.managed_files[0]
-        
+
         assert transform_parametrize_content in mf._content_transformers
 
-    def test_path_pfx_refreshable_content(self, man_tst):
+    def test_path_pfx_puttable_content_or_updatable_content(self, man_tst, request):
         mf = man_tst.managed_files[0]
-        assert mf._content_transformers.count(transform_refreshable_content) == 1
+        if request.node.name.endswith("[puttable]"):
+            assert mf._content_transformers.count(transform_puttable_content) == 1
 
-        path_pfx_refreshable_content(mf)
+            mf.is_refreshable = False       # reset to default to prevent assertation/multi-check error
+            path_pfx_puttable_content(mf)
+            assert mf._content_transformers.count(transform_puttable_content) == 2
+        elif request.node.name.endswith("[updatable]"):
+            assert mf._content_transformers.count(transform_updatable_content) == 1
 
-        assert mf._content_transformers.count(transform_refreshable_content) == 2
+            mf.is_refreshable = False       # reset to default to prevent assertation/multi-check error
+            path_pfx_updatable_content(mf)
+            assert mf._content_transformers.count(transform_updatable_content) == 2
+        else:
+            assert request.node.name.endswith("[overwritable]")
 
-    def test_path_pfx_refreshable_content_adding_content_transformer(self, man_tst):
+    def test_path_pfx_puttable_content_or_updatable_content_adding_content_transformer(self, man_tst, request):
         mf = man_tst.managed_files[0]
 
-        assert mf.refreshable is True
-        assert transform_refreshable_content in mf._content_transformers
+        assert mf.is_refreshable is True
+        if request.node.name.endswith("[puttable]"):
+            assert transform_puttable_content in mf._content_transformers
+        elif request.node.name.endswith("[updatable]"):
+            assert transform_updatable_content in mf._content_transformers
+        else:
+            assert request.node.name.endswith("[overwritable]")
 
 
 class TestContentTransformers:
-    def test_transform_parametrize_content(self, man_tst):
+    def test_transform_parametrize_content(self, man_tst, request):
         mf = man_tst.managed_files[0]
+        ovw = request.node.name.endswith("[overwritable]")
 
         assert isinstance(mf.file_content, str)
-        assert mf.file_content.count(REFRESHABLE_TEMPLATE_MARKER) == 1
-        assert mf.file_content.count(tst_patcher) == 1
+        assert mf.file_content.count(REFRESHABLE_TEMPLATE_MARKER) == (0 if ovw else 1)
+        assert mf.file_content.count(tst_patcher) == (0 if ovw else 1)
         assert mf.file_content.count(tst_dst_ends_content) == 1
         assert mf.file_content.endswith(tst_dst_ends_content)
-        assert mf.file_content == tst_dst_full_content
+        assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
 
         new_content = transform_parametrize_content(mf)
 
         assert new_content == mf.file_content
 
-    def test_transform_refreshable_content(self, man_tst):
+    def test_transform_puttable_content(self, man_tst, request):
         mf = man_tst.managed_files[0]
+        ovw = request.node.name.endswith("[overwritable]")
 
         assert isinstance(mf.file_content, str)
-        assert mf.file_content.count(REFRESHABLE_TEMPLATE_MARKER) == 1
-        assert mf.file_content.count(tst_patcher) == 1
+        assert mf.file_content.count(REFRESHABLE_TEMPLATE_MARKER) == (0 if ovw else 1)
+        assert mf.file_content.count(tst_patcher) == (0 if ovw else 1)
         assert mf.file_content.count(tst_dst_ends_content) == 1
         assert mf.file_content.endswith(tst_dst_ends_content)
-        assert mf.file_content == tst_dst_full_content
+        assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
 
-        new_content = transform_refreshable_content(mf)
+        new_content = transform_puttable_content(mf)
 
-        assert new_content.count(REFRESHABLE_TEMPLATE_MARKER) == 2
-        assert new_content.count(tst_patcher) == 2
+        assert new_content.count(REFRESHABLE_TEMPLATE_MARKER) == (1 if ovw else 2)
+        assert new_content.count(tst_patcher) == (1 if ovw else 2)
         assert new_content.count(tst_dst_ends_content) == 1
         assert new_content.endswith(tst_dst_ends_content)
+        assert isinstance(mf.file_content, str)
         assert mf.file_content in new_content
-        assert mf.file_content == tst_dst_full_content
+        assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
+
+    def test_transform_updatable_content(self, man_tst, request):
+        mf = man_tst.managed_files[0]
+        ovw = request.node.name.endswith("[overwritable]")
+
+        assert isinstance(mf.file_content, str)
+        assert mf.file_content.count(REFRESHABLE_TEMPLATE_MARKER) == (0 if ovw else 1)
+        assert mf.file_content.count(tst_patcher) == (0 if ovw else 1)
+        assert mf.file_content.count(tst_dst_ends_content) == 1
+        assert mf.file_content.endswith(tst_dst_ends_content)
+        assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
+
+        new_content = transform_updatable_content(mf)   # check/update to new content (w/o changing mf.file_content)
+
+        assert new_content.count(REFRESHABLE_TEMPLATE_MARKER) == (1 if ovw else 2)
+        assert new_content.count(tst_patcher) == (1 if ovw else 2)
+        assert new_content.count(tst_dst_ends_content) == 1
+        assert new_content.endswith(tst_dst_ends_content)
+        assert isinstance(mf.file_content, str)
+        assert mf.file_content in new_content
+        assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
 
 
 class TestHelpers:
-    def test_deploy_template(self, tpl_dir):
-        tpl_file_name = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + 'name_rest' + '{var_name}'
+    def test_deploy_template_puttable(self, tpl_dir):
+        tpl_file_name = PUTTABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + 'name_rest' + '{var_name}'
         tpl_file_path = os_path_join(tpl_dir, 'tpl_root', tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
         dst_path = os_path_join('dst_root', tpl_file_name)
@@ -145,8 +223,8 @@ class TestHelpers:
         assert dst_content.count('deploy_template_default_patcher') == 1
         assert dst_content == tst_dst_full_content.replace(tst_patcher, 'deploy_template_default_patcher')
 
-    def test_deploy_template_skipped_by_locked_file_ext(self, tpl_dir):
-        tpl_file_name = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + 'name_rest'
+    def test_deploy_template_skipped_by_locked_file_ext(self, tpl_dir, path_pfx):
+        tpl_file_name = path_pfx + F_STRINGS_PATH_PFX + 'name_rest'
         tpl_file_path = os_path_join(tpl_dir, 'tpl_root', tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
         dst_path = os_path_join('dst_root', tpl_file_name)
@@ -160,8 +238,9 @@ class TestHelpers:
         assert not os_path_isfile(stripped_dst_path)
         assert os_path_isfile(stripped_dst_path + DEPLOY_LOCK_EXT)
 
-    def test_deploy_template_skipped_by_missing_refreshable_marker(self, tpl_dir):
-        tpl_file_name = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + 'name_rest'
+    def test_deploy_template_skipped_by_missing_refreshable_marker(self, tpl_dir, path_pfx, request):
+        ovw = request.node.name.endswith("[overwritable]")
+        tpl_file_name = path_pfx + F_STRINGS_PATH_PFX + 'name_rest'
         tpl_file_path = os_path_join(tpl_dir, 'tpl_root', tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
         dst_path = os_path_join('dst_root', tpl_file_name)
@@ -172,7 +251,7 @@ class TestHelpers:
         dst_file = deploy_template(tpl_file_path, dst_path=dst_path,
                                    prefixes_parsers=DEFAULT_PATH_PREFIXES_PARSERS, tpl_vars=tst_ctx_vars)
 
-        assert dst_file == ""
+        assert dst_file == (stripped_dst_path if ovw else "")
         assert os_path_isfile(stripped_dst_path)
         assert REFRESHABLE_TEMPLATE_MARKER not in read_file(stripped_dst_path)
         assert not os_path_isfile(stripped_dst_path + DEPLOY_LOCK_EXT)
@@ -182,17 +261,18 @@ class TestHelpers:
         dst_file = deploy_template(tpl_file_path, dst_path=dst_path,
                                    prefixes_parsers=DEFAULT_PATH_PREFIXES_PARSERS, tpl_vars=tst_ctx_vars)
 
-        assert dst_file
         assert dst_file == stripped_dst_path
         assert os_path_isfile(dst_file)
         dst_content = read_file(dst_file)
         assert dst_content.endswith(tst_dst_ends_content)
-        assert dst_content.count(REFRESHABLE_TEMPLATE_MARKER) == 1
-        assert dst_content.count('deploy_template_default_patcher') == 1
-        assert dst_content == tst_dst_full_content.replace(tst_patcher, 'deploy_template_default_patcher')
+        assert dst_content.count(REFRESHABLE_TEMPLATE_MARKER) == (0 if ovw else 1)
+        assert dst_content.count('deploy_template_default_patcher') == (0 if ovw else 1)
+        if not ovw:
+            assert dst_content == tst_dst_full_content.replace(tst_patcher, 'deploy_template_default_patcher')
 
-    def test_deploy_template_skipped_up_to_date_refreshable(self, tpl_dir):
-        tpl_file_name = F_STRINGS_PATH_PFX + REFRESHABLE_TEMPLATE_PATH_PFX + 'name_rest'
+    def test_deploy_template_skipped_up_to_date(self, tpl_dir, path_pfx, request):
+        ovw = request.node.name.endswith("[overwritable]")
+        tpl_file_name = F_STRINGS_PATH_PFX + path_pfx + 'name_rest'
         tpl_file_path = os_path_join(tpl_dir, 'tpl_root', tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
         dst_path = os_path_join('dst_root', tpl_file_name)
@@ -203,31 +283,58 @@ class TestHelpers:
         dst_file = deploy_template(tpl_file_path, dst_path=dst_path, patcher=tst_patcher,
                                    prefixes_parsers=DEFAULT_PATH_PREFIXES_PARSERS, tpl_vars=tst_ctx_vars)
 
-        assert dst_file == ""
+        assert dst_file == (stripped_dst_path if ovw else "")
         assert os_path_isfile(stripped_dst_path)
         dst_content = read_file(stripped_dst_path)
         assert dst_content.endswith(tst_dst_ends_content)
-        assert dst_content.count(REFRESHABLE_TEMPLATE_MARKER) == 1
-        assert dst_content.count(tst_patcher) == 1
-        assert dst_content == tst_dst_full_content
+        assert dst_content.count(REFRESHABLE_TEMPLATE_MARKER) == (0 if ovw else 1)
+        assert dst_content.count(tst_patcher) == (0 if ovw else 1)
+        assert dst_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
         assert not os_path_isfile(stripped_dst_path + DEPLOY_LOCK_EXT)
 
-    def test_patch_refreshable_content_any_ext(self):
-        content = patch_refreshable_content('patch.file', tst_tpl_content, 'tst patcher')
+    def test_deploy_template_updatable(self, tpl_dir):
+        tpl_file_name = UPDATABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + 'name_rest' + '{var_name}'
+        tpl_file_path = os_path_join(tpl_dir, 'tpl_root', tpl_file_name)
+        write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
+        dst_path = os_path_join('dst_root', tpl_file_name)
+
+        dst_file = deploy_template(tpl_file_path, dst_path=dst_path,
+                                   prefixes_parsers=DEFAULT_PATH_PREFIXES_PARSERS, tpl_vars=tst_ctx_vars)
+
+        assert dst_file == ""
+
+        stripped_dst_path = os_path_join(tpl_dir, 'dst_root', 'name_rest' + tst_ctx_vars['var_name'])
+        write_file(stripped_dst_path, REFRESHABLE_TEMPLATE_MARKER, make_dirs=True)
+
+        dst_file = deploy_template(tpl_file_path, dst_path=dst_path,
+                                   prefixes_parsers=DEFAULT_PATH_PREFIXES_PARSERS, tpl_vars=tst_ctx_vars)
+
+        assert dst_file
+        assert dst_file.endswith(tst_ctx_vars['var_name'])
+        assert os_path_isfile(dst_file)
+        assert dst_file == norm_path(os_path_join(tpl_dir, 'dst_root', 'name_rest' + tst_ctx_vars['var_name']))
+        dst_content = read_file(dst_file)
+        assert dst_content.endswith(tst_dst_ends_content)
+        assert dst_content.count(REFRESHABLE_TEMPLATE_MARKER) == 1
+        assert dst_content.count('deploy_template_default_patcher') == 1
+        assert dst_content == tst_dst_full_content.replace(tst_patcher, 'deploy_template_default_patcher')
+
+    def test_extend_content_with_marker_any_ext(self):
+        content = extend_content_with_marker('patch.file', tst_tpl_content, 'tst patcher')
 
         assert content.startswith('# ' + REFRESHABLE_TEMPLATE_MARKER)
         assert content.count('tst patcher') == 1
         assert content.endswith(tst_tpl_content)
 
-    def test_patch_refreshable_content_md_ext(self):
-        content = patch_refreshable_content('patch.md', tst_tpl_content, 'tst patcher')
+    def test_extend_content_with_marker_md_ext(self):
+        content = extend_content_with_marker('patch.md', tst_tpl_content, 'tst patcher')
 
         assert content.startswith("<!-- " + REFRESHABLE_TEMPLATE_MARKER)
         assert content.count('tst patcher') == 1
         assert content.endswith(tst_tpl_content)
 
-    def test_patch_refreshable_content_rst_ext(self):
-        content = patch_refreshable_content('patch.rst', tst_tpl_content, 'tst patcher')
+    def test_extend_content_with_marker_rst_ext(self):
+        content = extend_content_with_marker('patch.rst', tst_tpl_content, 'tst patcher')
 
         assert content.startswith(os.linesep + ".." + os.linesep + " " * 4 + REFRESHABLE_TEMPLATE_MARKER)
         assert content.count('tst patcher') == 1
@@ -398,44 +505,25 @@ class TestTemplateMngr:
         assert man.skipped_files == set()
         assert man.template_files == []
 
-    def test_content_encoding_mismatch_error(self, tpl_dir):
-        def content_transformer(_mf: ManagedFile) -> str:
-            return "any new content"
-
-        def path_pfx_parser2(mf: ManagedFile, *_args):
-            mf.add_content_transformer(content_transformer, encoding='ascii')
-
-        pfx_parsers = DEFAULT_PATH_PREFIXES_PARSERS.copy()
-        pfx_parsers[REFRESHABLE_TEMPLATE_PATH_PFX] = (0, path_pfx_parser2)
-
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
-        write_file(tpl_file_path, tst_tpl_content)
-        man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, tst_tpl_file_name)],
-            pfx_parsers,
-            tst_ctx_vars)
-
-        assert man.deploy_files == {}
-        assert len(man.log_lines()) == 0
-        assert len(man.log_lines(verbose=True)) == 2
-        assert man.managed_files[0].skip_or_error
-        assert len(man.managed_files[0].comments) == 1
-        assert man.managed_files[0].comments[0].startswith(MANAGED_FILE_ERROR_COMMENT)
-
     def test_content_type_mismatch_error(self, tpl_dir):
-        def content_transformer(_mf: ManagedFile) -> str:
+        def _content_transformer(_mf: ManagedFile) -> str:
             return "any new content"
 
-        def path_pfx_parser2(mf: ManagedFile, *_args):
-            mf.add_content_transformer(content_transformer, extra_mode='b')
+        def _path_pfx_parser1(mf: ManagedFile, *_args: str):
+            mf.add_content_transformer(_content_transformer, encoding='ascii')
 
-        pfx_parsers = DEFAULT_PATH_PREFIXES_PARSERS.copy()
-        pfx_parsers[REFRESHABLE_TEMPLATE_PATH_PFX] = (0, path_pfx_parser2)
+        def _path_pfx_parser2(mf: ManagedFile, *_args: str):
+            mf.add_content_transformer(_content_transformer, encoding='utf8')
 
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
+        path_pfx1 = 'PathPfx1-'
+        path_pfx2 = 'PathPfx2-'
+        tpl_file_name = path_pfx1 + path_pfx2 + tst_tpl_name_rest
+        tpl_file_path = os_path_join(tpl_dir, tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content)
+        pfx_parsers = {path_pfx1: (0, _path_pfx_parser1), path_pfx2: (0, _path_pfx_parser2)}
+
         man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, tst_tpl_file_name)],
+            [(tst_patcher, tpl_file_path, tpl_file_name)],
             pfx_parsers,
             tst_ctx_vars)
 
@@ -446,12 +534,128 @@ class TestTemplateMngr:
         assert len(man.managed_files[0].comments) == 1
         assert man.managed_files[0].comments[0].startswith(MANAGED_FILE_ERROR_COMMENT)
 
-    def test_deployment(self, tpl_dir):
-        write_file(tst_tpl_file_name, tst_tpl_content)
-        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_file_name)
+    def test_deploy_plain_binary_create(self, tpl_dir):
+        write_bin_file(tst_tpl_name_rest, tst_tpl_content.encode())
+        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_name_rest)
         dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
         man = TemplateMngr(
-            [(tst_patcher, tst_tpl_file_name, prefixed_path)],
+            [(tst_patcher, tst_tpl_name_rest, prefixed_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+        assert not os_path_isfile(dst_file_path)
+
+        man.deploy()
+
+        assert os_path_isfile(dst_file_path)
+
+        assert read_bin_file(dst_file_path) == tst_tpl_content.encode()
+        assert read_file(dst_file_path) == tst_tpl_content
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+    def test_deploy_plain_binary_not_overwritten(self, tpl_dir):
+        write_bin_file(tst_tpl_name_rest, tst_tpl_content.encode())
+        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_name_rest)
+        dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
+        old_bin_content = b"existing bin file content while not get overwritten"
+        write_bin_file(dst_file_path, old_bin_content, make_dirs=True)
+        man = TemplateMngr(
+            [(tst_patcher, tst_tpl_name_rest, prefixed_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.checked_files) == 1
+        assert man.checked_files == {dst_file_path}
+        assert len(man.deploy_files) == 0
+        assert len(man.log_lines()) == 0
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files) == 1
+        assert man.managed_files[0].skip_or_error is True
+        assert len(man.managed_files[0].comments) == 1
+        assert "not overwritable destination file already exists" in man.managed_files[0].comments[0]
+
+        man.deploy()
+
+        assert read_bin_file(dst_file_path) == old_bin_content
+        assert len(man.deploy_files) == 0
+        assert len(man.log_lines()) == 0
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files) == 1
+        assert man.managed_files[0].skip_or_error is True
+        assert len(man.managed_files[0].comments) == 1
+
+    def test_deploy_plain_binary_overwrite(self, tpl_dir):
+        tpl_file_name = OVERWRITABLE_BIN_TEMPLATE_PATH_PFX + tst_tpl_name_rest
+        write_bin_file(tpl_file_name, tst_tpl_content.encode())
+        prefixed_path = os_path_join('dst_tst_dir', tpl_file_name)
+        dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
+        write_bin_file(dst_file_path, b"old content - to be overwritten", make_dirs=True)
+        man = TemplateMngr(
+            [(tst_patcher, tpl_file_name, prefixed_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+        man.deploy()
+
+        assert os_path_isfile(dst_file_path)
+        assert read_bin_file(dst_file_path) == tst_tpl_content.encode()
+        assert read_file(dst_file_path) == tst_tpl_content
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+    def test_deploy_plain_text(self, tpl_dir):
+        write_file(tst_tpl_name_rest, tst_tpl_content)
+        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_name_rest)
+        dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
+        man = TemplateMngr(
+            [(tst_patcher, tst_tpl_name_rest, prefixed_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+        assert not os_path_isfile(dst_file_path)
+
+        man.deploy()
+
+        assert os_path_isfile(dst_file_path)
+
+        assert read_file(dst_file_path) == tst_tpl_content
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+    def test_deploy_puttable(self, tpl_dir):
+        write_file(tst_tpl_file_name_puttable, tst_tpl_content)
+        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_file_name_puttable)
+        dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
+        man = TemplateMngr(
+            [(tst_patcher, tst_tpl_file_name_puttable, prefixed_path)],
             DEFAULT_PATH_PREFIXES_PARSERS,
             tst_ctx_vars)
 
@@ -474,14 +678,41 @@ class TestTemplateMngr:
         assert len(man.log_lines(verbose=True)) == 2
         assert len(man.managed_files[0].comments) == 0
 
+    def test_deploy_updatable(self, tpl_dir):
+        write_file(tst_tpl_file_name_updatable, tst_tpl_content)
+        prefixed_path = os_path_join('dst_tst_dir', tst_tpl_file_name_updatable)
+        dst_file_path = os_path_join('dst_tst_dir', tst_dst_file_name)
+        write_file(dst_file_path, REFRESHABLE_TEMPLATE_MARKER, make_dirs=True)
+        man = TemplateMngr(
+            [(tst_patcher, tst_tpl_file_name_updatable, prefixed_path)],
+            DEFAULT_PATH_PREFIXES_PARSERS,
+            tst_ctx_vars)
+
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
+        man.deploy()
+
+        assert os_path_isfile(dst_file_path)
+
+        assert read_file(dst_file_path) == tst_dst_full_content
+        assert len(man.deploy_files) == 1
+        assert next(iter(man.deploy_files)) == norm_path(dst_file_path)
+        assert len(man.log_lines()) == 1
+        assert len(man.log_lines(verbose=True)) == 2
+        assert len(man.managed_files[0].comments) == 0
+
     def test_file_path_extension(self, tpl_dir):
-        def path_pfx_parser(mf: ManagedFile, *_args):
+        def path_pfx_parser(mf: ManagedFile, *_args: str):
             mf.extend_dst_file_path('ext_dir1/ext_dir2')
 
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
+        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name_puttable)
         write_file(tpl_file_path, tst_tpl_content)
         man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, tst_tpl_file_name)],
+            [(tst_patcher, tpl_file_path, tst_tpl_file_name_puttable)],
             {F_STRINGS_PATH_PFX: (0, path_pfx_parser)},
             tst_ctx_vars)
 
@@ -492,14 +723,14 @@ class TestTemplateMngr:
         assert len(man.deploy_files) == 1
 
     def test_file_path_extension_warning_if(self, tpl_dir):
-        def path_pfx_parser(mf: ManagedFile, *_args):
+        def path_pfx_parser(mf: ManagedFile, *_args: str):
             mf.extend_dst_file_path('old_dir0/old_dir2')
             mf.extend_dst_file_path('ext_dir1/ext_dir2')
 
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
+        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name_puttable)
         write_file(tpl_file_path, tst_tpl_content)
         man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, tst_tpl_file_name)],
+            [(tst_patcher, tpl_file_path, tst_tpl_file_name_puttable)],
             {F_STRINGS_PATH_PFX: (0, path_pfx_parser)},
             tst_ctx_vars)
 
@@ -510,81 +741,43 @@ class TestTemplateMngr:
         assert len(man.deploy_files) == 1
 
     def test_file_path_in_prefix_path_compilation(self, tpl_dir):
-        def f_str_parser(mf: ManagedFile, *_args):
+        def f_str_parser(mf: ManagedFile, *_args: str):
             assert mf.dst_file_path == tst_dst_file_name
             path_pfx_parametrize_with_context(mf)
 
-        def refreshable_parser(mf: ManagedFile):
+        def puttable_parser(mf: ManagedFile, *_args):
             assert mf.dst_file_path == tst_dst_file_name
-            path_pfx_refreshable_content(mf)
+            path_pfx_puttable_content(mf)
 
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
+        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name_puttable)
         write_file(tpl_file_path, tst_tpl_content)
         man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, tst_tpl_file_name)],
+            [(tst_patcher, tpl_file_path, tst_tpl_file_name_puttable)],
             {F_STRINGS_PATH_PFX: (0, f_str_parser),
-             REFRESHABLE_TEMPLATE_PATH_PFX: (0, refreshable_parser)},
+             PUTTABLE_TEMPLATE_PATH_PFX: (0, puttable_parser)},
             tst_ctx_vars)
 
         assert len(man.deploy_files) == 1
 
-    def test_multiple_refreshable_path_prefix_warning(self, tpl_dir):
-        dst_path = os_path_join(REFRESHABLE_TEMPLATE_PATH_PFX + "dir_name", tst_tpl_file_name)
+    def test_multiple_puttable_path_prefix_exception(self, tpl_dir):
+        dst_path = os_path_join(PUTTABLE_TEMPLATE_PATH_PFX + "dir_name", tst_tpl_file_name_puttable)
         tpl_file_path = os_path_join(tpl_dir, dst_path)
         write_file(tpl_file_path, tst_tpl_content, make_dirs=True)
-        man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, dst_path)],
-            DEFAULT_PATH_PREFIXES_PARSERS,
-            tst_ctx_vars)
 
-        assert len(man.deploy_files) == 1
-        assert len(man.log_lines()) == 1
-        assert len(man.log_lines(verbose=True)) == 3
-        assert len(man.managed_files[0].comments) == 1
+        with pytest.raises(AssertionError):
+            TemplateMngr([(tst_patcher, tpl_file_path, dst_path)], DEFAULT_PATH_PREFIXES_PARSERS, tst_ctx_vars)
 
     def test_path_prefix_with_args(self, tpl_dir):
         dst_path = (TST_ARGS_PREFIX
                     + tst_prefix_arg1 + PATH_PREFIXES_ARGS_SEP
                     + tst_prefix_arg2 + PATH_PREFIXES_ARGS_SEP
-                    + tst_tpl_file_name)
-        write_file(tst_tpl_file_name, tst_tpl_content)
+                    + tst_tpl_file_name_puttable)
+        write_file(tst_tpl_file_name_puttable, tst_tpl_content)
         man = TemplateMngr(
-            [(tst_patcher, tst_tpl_file_name, dst_path)],
+            [(tst_patcher, tst_tpl_file_name_puttable, dst_path)],
             TST_PREFIX_PARSERS,
             tst_ctx_vars)
 
-        assert len(man.deploy_files) == 1
-        assert len(man.log_lines()) == 1
-        assert len(man.log_lines(verbose=True)) == 2
-        assert len(man.managed_files[0].comments) == 0
-
-    def test_refreshable_path_prefix_parser_runs_last_and_only_once(self, tpl_dir):
-        def f_str_parser(mf: ManagedFile, *_args):
-            if 'run-refreshable' in mf.manager.context_vars:
-                mf.error("run of refreshable parser BEFORE f_str_parser")
-            if 'run-f-string-parser' in mf.manager.context_vars:
-                mf.error("duplicate run of f_str_parser")
-            mf.manager.context_vars['run-f-string-parser'] = True
-            path_pfx_parametrize_with_context(mf)
-
-        def refreshable_parser(mf: ManagedFile):
-            if 'run-f-string-parser' not in mf.manager.context_vars:
-                mf.error("run of refreshable parser without run of f_str_parser")
-            if 'run-refreshable' in mf.manager.context_vars:
-                mf.error("duplicate run of refreshable prefix parser")
-            mf.manager.context_vars['run-refreshable'] = True
-            path_pfx_refreshable_content(mf)
-
-        dst_path = REFRESHABLE_TEMPLATE_PATH_PFX + F_STRINGS_PATH_PFX + "fil_nam.xxx"
-        tpl_file_path = os_path_join(tpl_dir, tst_tpl_file_name)
-        write_file(tpl_file_path, tst_tpl_content)
-        man = TemplateMngr(
-            [(tst_patcher, tpl_file_path, dst_path)],
-            {F_STRINGS_PATH_PFX: (0, f_str_parser),
-             REFRESHABLE_TEMPLATE_PATH_PFX: (0, refreshable_parser)},
-            tst_ctx_vars)
-
-        assert not man.managed_files[0].skip_or_error
         assert len(man.deploy_files) == 1
         assert len(man.log_lines()) == 1
         assert len(man.log_lines(verbose=True)) == 2
@@ -607,12 +800,12 @@ class TestTemplateMngr:
         assert dst_path in fil_repr
         assert tst_patcher in fil_repr
         assert 'skip_or_error' in fil_repr
-        assert 'refreshable' not in fil_repr
-        assert 'up_to_date' not in fil_repr
+        assert 'is_refreshable' not in fil_repr
+        assert 'is_up_to_date' not in fil_repr
 
     def test_skip_lower_priority(self, tpl_dir):
         dst_file = "dst_file_name.ext"
-        dst_path = REFRESHABLE_TEMPLATE_PATH_PFX + dst_file
+        dst_path = PUTTABLE_TEMPLATE_PATH_PFX + dst_file
         tpl_file_path1 = os_path_join(tpl_dir, 'tpl_file_name.ext1')
         write_file(tpl_file_path1, tst_tpl_content + 'tst_content_1')
         tpl_file_path2 = os_path_join(tpl_dir, 'tpl_file_name.ext2')
@@ -627,14 +820,15 @@ class TestTemplateMngr:
         assert len(man.deploy_files) == 1
         assert next(iter(man.deploy_files), "") == norm_path(dst_file)
         mf = next(iter(man.deploy_files.values()))
+        assert isinstance(mf.file_content, str)
         assert mf.file_content.endswith('tst_content_1')
-        assert not mf.up_to_date
+        assert not mf.is_up_to_date
         assert len(man.log_lines()) == 1
         assert len(man.log_lines(verbose=True)) == 4    # 2 templates processed, 1st add/miss, 2nd lower-priority-skip
         assert len(man.managed_files[0].comments) == 0
 
-        # same test again but with existing and identical destination file; check for mf.up_to_date flag
-        write_file(dst_file, patch_refreshable_content(dst_file, tst_tpl_content + 'tst_content_1', tst_patcher + '1'))
+        # same test again but with existing and identical destination file; check for mf.is_up_to_date flag
+        write_file(dst_file, extend_content_with_marker(dst_file, tst_tpl_content + 'tst_content_1', tst_patcher + '1'))
 
         man = TemplateMngr(
             [(tst_patcher + '1', tpl_file_path1, dst_path),
@@ -644,7 +838,8 @@ class TestTemplateMngr:
 
         assert len(man.deploy_files) == 1
         mf = next(iter(man.deploy_files.values()))
-        assert mf.up_to_date
+        assert mf.is_up_to_date
+        assert isinstance(mf.file_content, str)
         assert mf.file_content.endswith('tst_content_1')
         assert len(man.log_lines()) == 1
         assert len(man.log_lines(verbose=True)) == 4    # 2 templates processed, 1st add/miss, 2nd lower-priority-skip
