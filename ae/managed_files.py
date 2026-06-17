@@ -28,7 +28,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.5'
+__version__ = '0.3.6'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -522,7 +522,7 @@ def prefix_parser(dst_path: str, prefixes_arg_counts: PathPrefixesArgCounts, arg
     """
     parts = []
     prefixes_args = []
-    for name in dst_path.split(os.path.sep):
+    for name in dst_path.replace("\\", "/").split("/"):
         name_rest, *name_suffixes = name.split(STOP_PARSING_PATH_PFX, maxsplit=1)
         while match := next(((pfx, cnt) for pfx, cnt in prefixes_arg_counts if name_rest.startswith(pfx)), None):
             prefix, arg_count = match
