@@ -18,8 +18,10 @@ in the template file, and could get replaced by Python code statements in the re
 use the function :func:`deploy_template` to convert a single template into a destination file.
 for bulk destination file deployments from multiple templates, use the :class:`TemplateMngr` class.
 """
+from __future__ import annotations
 import os
-from typing import Any, Callable, Iterable, Optional, Protocol, cast, runtime_checkable
+from collections.abc import Callable, Iterable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from ae.base import (                                                                       # type: ignore
     norm_path, os_path_basename, os_path_isfile, os_path_join, os_path_splitext,
@@ -28,7 +30,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.6'
+__version__ = '0.3.7'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -79,7 +81,7 @@ type OutdatedFilesPathsContents = list[tuple[str, ContentType, ContentType]]
 @runtime_checkable
 class PathPrefixesFunc(Protocol):                       #: path prefixes parser function
     # the / before *path_prefix_args marks parameters to its left as positional-only, ignoring the name mismatch. """
-    def __call__(self, managed_file: 'ManagedFile', /, *path_prefix_args: str) -> None: ...
+    def __call__(self, managed_file: ManagedFile, /, *path_prefix_args: str) -> None: ...
 
 
 PathPrefixesParsers = dict[str, tuple[int, PathPrefixesFunc]]  #: registered path prefixes parsers
@@ -96,7 +98,7 @@ TplVars = dict[str, Any]                                #: template placeholder 
 
 class ManagedFile:          # pylint: disable=too-many-instance-attributes
     """ represents a template/managed file """
-    def __init__(self, manager: 'TemplateMngr', patcher: str, template_path: str, dst_path: str = "."):
+    def __init__(self, manager: TemplateMngr, patcher: str, template_path: str, dst_path: str = "."):
         """ create new managed file instance
 
         :param manager:         :class:`TemplateMngr` instance, to reference path prefixes, context vars and replacers.
@@ -359,7 +361,7 @@ class TemplateMngr:
 
 
 def deploy_template(template_file_path: str, dst_path: str = ".", patcher: str = 'deploy_template_default_patcher',
-                    prefixes_parsers: Optional[PathPrefixesParsers] = None, tpl_vars: Optional[TplVars] = None) -> str:
+                    prefixes_parsers: PathPrefixesParsers | None = None, tpl_vars: TplVars | None = None) -> str:
     """ create/update a file from a template.
 
     :param template_file_path:  template/source file path.
