@@ -1,5 +1,7 @@
 """ managed_files unit tests """
 import os
+from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 from mypy.util import os_path_join
@@ -58,9 +60,16 @@ def path_pfx(request):
     return request.param
 
 
+@pytest.fixture
+def mf_instance() -> ManagedFile:
+    mgr = MagicMock()
+    mgr.context_vars = tst_ctx_vars
+    return ManagedFile(mgr, tst_patcher, tst_tpl_name_rest, dst_path=tst_tpl_name_rest)
+
+
 @pytest.fixture(params=[OVERWRITABLE_TEMPLATE_PATH_PFX, PUTTABLE_TEMPLATE_PATH_PFX, UPDATABLE_TEMPLATE_PATH_PFX],
                 ids=["overwritable", "puttable", "updatable"])
-def man_tst(request, tpl_dir):
+def mgr_instance(request, tpl_dir) -> TemplateMngr:
     """ TemplateMngr instance parametrized as with overwritable+puttable+updatable of a template's template. """
     tpl_file_name = request.param + F_STRINGS_PATH_PFX + STOP_PARSING_PATH_PFX + tst_tpl_file_name_puttable
     tpl_file_path = os_path_join(tpl_dir, 'source', tpl_file_name)
@@ -102,21 +111,21 @@ class TestPathPrefixParsers:
         with pytest.raises(AssertionError, match="multiple path prefixes setting is_refreshable"):
             TemplateMngr([(tst_patcher, file_path, file_path)], TST_PREFIX_PARSERS, tst_ctx_vars)
 
-    def test_path_pfx_parametrize_with_context(self, man_tst):
-        mf = man_tst.managed_files[0]
+    def test_path_pfx_parametrize_with_context(self, mgr_instance):
+        mf = mgr_instance.managed_files[0]
         assert mf._content_transformers.count(transform_parametrize_content) == 1
 
         path_pfx_parametrize_with_context(mf)
 
         assert mf._content_transformers.count(transform_parametrize_content) == 2
 
-    def test_path_pfx_parametrize_with_context_adding_content_transformer(self, man_tst):
-        mf = man_tst.managed_files[0]
+    def test_path_pfx_parametrize_with_context_adding_content_transformer(self, mgr_instance):
+        mf = mgr_instance.managed_files[0]
 
         assert transform_parametrize_content in mf._content_transformers
 
-    def test_path_pfx_puttable_content_or_updatable_content(self, man_tst, request):
-        mf = man_tst.managed_files[0]
+    def test_path_pfx_puttable_content_or_updatable_content(self, mgr_instance, request):
+        mf = mgr_instance.managed_files[0]
         if request.node.name.endswith("[puttable]"):
             assert mf._content_transformers.count(transform_puttable_content) == 1
 
@@ -132,8 +141,8 @@ class TestPathPrefixParsers:
         else:
             assert request.node.name.endswith("[overwritable]")
 
-    def test_path_pfx_puttable_content_or_updatable_content_adding_content_transformer(self, man_tst, request):
-        mf = man_tst.managed_files[0]
+    def test_path_pfx_puttable_content_or_updatable_content_adding_content_transformer(self, mgr_instance, request):
+        mf = mgr_instance.managed_files[0]
 
         assert mf.is_refreshable is True
         if request.node.name.endswith("[puttable]"):
@@ -145,8 +154,8 @@ class TestPathPrefixParsers:
 
 
 class TestContentTransformers:
-    def test_transform_parametrize_content(self, man_tst, request):
-        mf = man_tst.managed_files[0]
+    def test_transform_parametrize_content(self, mgr_instance, request):
+        mf = mgr_instance.managed_files[0]
         ovw = request.node.name.endswith("[overwritable]")
 
         assert isinstance(mf.file_content, str)
@@ -160,8 +169,29 @@ class TestContentTransformers:
 
         assert new_content == mf.file_content
 
-    def test_transform_puttable_content(self, man_tst, request):
-        mf = man_tst.managed_files[0]
+    def test_transform_parametrize_content_error(self, mgr_instance):
+        mf = mgr_instance.managed_files[0]
+        content = cast(str, mf.file_content)
+
+        mf.file_content = content + "{missing_context_variable}"
+        with pytest.raises(NameError) as exc:
+            transform_parametrize_content(mf)
+        assert mf.template_path in str(exc)
+        assert "missing_context_variable" in str(exc)
+
+        mf.file_content = content + "{invalid ; context : expression}"
+        with pytest.raises(SyntaxError) as exc:
+            transform_parametrize_content(mf)
+        assert mf.template_path in exc.value.args[0]  # using str(exc) fails in long strings because of ...-abbreviation
+
+        mf.file_content = content + "{int('invalid_number')}"
+        with pytest.raises(ValueError) as exc:
+            transform_parametrize_content(mf)
+        assert mf.template_path in str(exc)
+        assert "invalid_number" in str(exc)
+
+    def test_transform_puttable_content(self, mgr_instance, request):
+        mf = mgr_instance.managed_files[0]
         ovw = request.node.name.endswith("[overwritable]")
 
         assert isinstance(mf.file_content, str)
@@ -181,8 +211,8 @@ class TestContentTransformers:
         assert mf.file_content in new_content
         assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
 
-    def test_transform_updatable_content(self, man_tst, request):
-        mf = man_tst.managed_files[0]
+    def test_transform_updatable_content(self, mgr_instance, request):
+        mf = mgr_instance.managed_files[0]
         ovw = request.node.name.endswith("[overwritable]")
 
         assert isinstance(mf.file_content, str)
@@ -456,6 +486,61 @@ class TestHelpers:
         assert isinstance(parsed, list)
         assert len(parsed) == 1
         assert parsed[0] == ('pre_fix_', ())
+
+
+class TestManagedFiles:     # only basic tests - full funcionality tests are done via TestTemplateMngr
+    def test_init_instance(self, mf_instance: ManagedFile):
+        assert mf_instance.manager
+        assert mf_instance.patcher == tst_patcher
+        assert mf_instance.template_path == tst_tpl_name_rest
+        assert mf_instance.comments == []
+        assert mf_instance.file_content is None
+        assert mf_instance.old_content is None
+        assert mf_instance.is_refreshable is False
+        assert mf_instance.is_up_to_date is False
+
+        assert mf_instance.dst_file_path == tst_dst_file_name
+        assert mf_instance.skip_or_error is False
+
+    def test_init_with_masked_curly_brackets_in_dst_path(self):
+        mgr = MagicMock()
+        mgr.context_vars = {}
+        mf = ManagedFile(mgr, "init tst patcher", "template/path/{{file}}.xxx", dst_path="path/{{file}}.xxx")
+        assert mf.dst_file_path == "path/{file}.xxx"
+
+    def test_init_with_context_var_replacement_in_dst_path(self, mf_instance):
+        assert mf_instance.dst_file_path == tst_dst_file_name
+
+        mgr = MagicMock()
+        mgr.context_vars = {}
+        with pytest.raises(NameError) as excinfo:
+            ManagedFile(mgr, "init tst patcher", "template/path/{file}.xxx", dst_path="path/{context_var}.xxx")
+        assert "context_var" in excinfo.value.args[0]
+
+        mgr.context_vars = {'context_var': 'var_value'}
+        f = ManagedFile(mgr, "init tst patcher", "template/path/{file}.xxx", dst_path="path/{context_var}.xxx")
+        assert f.dst_file_path == "path/var_value.xxx"
+
+    def test_setting_error(self, mf_instance: ManagedFile):
+        err_msg = "error message"
+        mf_instance.error(err_msg)
+
+        assert err_msg in mf_instance.comments[0]
+        assert mf_instance.skip_or_error is True
+
+    def test_setting_skip(self, mf_instance: ManagedFile):
+        skip_msg = "skip message"
+        mf_instance.error(skip_msg)
+
+        assert skip_msg in mf_instance.comments[0]
+        assert mf_instance.skip_or_error is True
+
+    def test_setting_warning(self, mf_instance: ManagedFile):
+        warn_msg = "warning message"
+        mf_instance.warning(warn_msg)
+
+        assert warn_msg in mf_instance.comments[0]
+        assert mf_instance.skip_or_error is False
 
 
 class TestReplacers:
