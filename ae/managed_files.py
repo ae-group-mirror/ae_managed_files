@@ -30,7 +30,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.7'
+__version__ = '0.3.8'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -105,13 +105,22 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         :param patcher:         templates collection (project) name and version (to be added into the destination file).
         :param template_path:   template/source file path.
         :param dst_path:        destination file path with optional path prefixes in its file and/or folder names.
+        :raises Exception:      extends context of any (NameError/SyntaxError/ValueError/...) exception, raised
+                                in the transformation of the destination file path/name, with the f-string-value
+                                (in the instantiation argument :paramref:`~ManagedFile.__init__.dst_path`) and the
+                                f-string-variables-values (in the :attr:`TemplateMngr.context_vars` attribute of the
+                                :paramref:`~ManagedFile.__init__.manager` argument).
         """
         self.manager = manager
         self.patcher = patcher
         self.template_path = template_path
 
         self._content_transformers: list[ContentTransformer] = []
-        self._dst_file_path = patch_string(dst_path, manager.context_vars)
+        context_vars = manager.context_vars     # to be shown in the locals-dump of full_stack_trace()
+        try:
+            self._dst_file_path = patch_string(dst_path, context_vars)
+        except (NameError, SyntaxError, ValueError, Exception) as exc:
+            raise type(exc)(f"destination file path conversion/patch error: '{exc}' for '{dst_path}'") from exc
         self._dst_path_stripped = False
         self._dst_path_extension = ""
 
@@ -569,13 +578,20 @@ DEFAULT_REPLACERS = {
 
 
 def transform_parametrize_content(mf: ManagedFile) -> str:
-    """ content transformer callee added via the :data:`F_STRINGS_PATH_PFX` path prefix.
+    """ content transformer callee added via the :data:`F_STRINGS_PATH_PFX` path prefix of a text file template.
 
     :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
+    :raises Exception:          extends original exception (NameError/SyntaxError/ValueError/...) raised in the
+                                transformation of the provided f-string :attr:`~ManagedFile.file_content` together with
+                                the :attr:`~TemplateMngr.context_vars`.
     """
     manager = mf.manager
-    return patch_string(cast(str, mf.file_content), manager.context_vars, **manager.replacers)
+    file_content, context_vars = mf.file_content, manager.context_vars  # to be shown in full_stack_trace() locals-dump
+    try:
+        return patch_string(cast(str, file_content), context_vars, **manager.replacers)
+    except (NameError, SyntaxError, ValueError, Exception) as tpl_exc:
+        raise type(tpl_exc)(f"content transform/patch error: '{tpl_exc}' in template '{mf.template_path}'") from tpl_exc
 
 
 def transform_puttable_content(mf: ManagedFile) -> str:
