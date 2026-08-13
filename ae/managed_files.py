@@ -30,14 +30,14 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.8'
+__version__ = '0.3.9'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
 PATH_PREFIXES_ARGS_SEP = '_'                            #: seperator/suffix of template file/path prefixes arguments
-F_STRINGS_PATH_PFX = 'fSt-'                             #: file name prefix if template contains f-strings
 
-# adding one of the following template path/file name prefixes will allow to replace the destination file
+F_STRINGS_PATH_PFX = 'fSt-'
+""" template file name prefix of a text file containing f-strings that will be replaced with the context var values. """
 OVERWRITABLE_BIN_TEMPLATE_PATH_PFX = 'Obi-'
 """ template file name prefix of a binary file that will get overwritten if it exists at their destination. """
 OVERWRITABLE_TEMPLATE_PATH_PFX = 'Ovw-'
@@ -126,7 +126,7 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
         self.comments: list[str] = []       #: to collect comments, errors and skip-reasons of this managed file
 
-        self.file_encoding: str | None = None
+        self.file_encoding: str | None = 'bin-bytes'
         """ encoding of this managed file set via :meth:`ManagedFile.add_content_transformer`; default='bin-bytes' """
 
         self.file_content: ContentType = None
@@ -145,10 +145,11 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
         :param tf:              content transformer callable, to be called with this instance as argument and returning
                                 the new/transformed content.
-        :param encoding:        text file content encoding or None (like passed to the built-in :func:`open` function);
-                                or specify 'bin-bytes' to add a binary transformer (bytes file content).
+        :param encoding:        for text files specify an encoding string (like 'ascii') or None that is accepted by
+                                the built-in :func:`open` function (None defaults to 'utf-8').
+                                for binary files specify 'bin-bytes' to keep a binary transformer (bytes file content).
         """
-        if self.file_encoding not in (None, encoding):
+        if self.file_encoding not in ('bin-bytes', encoding):
             self.error(f"file encoding mismatch {encoding=} != {self.file_encoding=}")
         self.file_encoding = encoding
 
@@ -238,7 +239,8 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
     def write_file_content(self):
         """ deploy file content of this managed file to its :attr:`dst_file_path`, creating not-existing folders. """
-        if (encoding := self.file_encoding) == 'bin-bytes':
+        encoding = self.file_encoding
+        if encoding == 'bin-bytes':
             # noinspection PyTypeChecker
             write_bin_file(self.dst_file_path, self.file_content, make_dirs=True)
         else:
@@ -462,7 +464,7 @@ def _path_pfx_check_single_refreshable(mf: ManagedFile) -> None:
 
 
 def path_pfx_parametrize_with_context(mf: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`F_STRINGS_PATH_PFX` prefix.
+    """ path prefix callee for the text file :data:`F_STRINGS_PATH_PFX` prefix.
 
     :param mf:                  ManagedFile instance.
     """
@@ -470,7 +472,7 @@ def path_pfx_parametrize_with_context(mf: ManagedFile, *_args: str):
 
 
 def path_pfx_overwritable_binary_content(mf: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`OVERWRITABLE_BIN_TEMPLATE_PATH_PFX` prefix.
+    """ path prefix callee for the binary file :data:`OVERWRITABLE_BIN_TEMPLATE_PATH_PFX` prefix.
 
     :param mf:                  ManagedFile instance.
     """
@@ -483,40 +485,41 @@ def path_pfx_overwritable_binary_content(mf: ManagedFile, *_args: str):
 
 
 def path_pfx_overwritable_content(mf: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`OVERWRITABLE_TEMPLATE_PATH_PFX` prefix.
+    """ path prefix callee for the text file :data:`OVERWRITABLE_TEMPLATE_PATH_PFX` prefix.
 
     :param mf:                  ManagedFile instance.
     """
     _path_pfx_check_single_refreshable(mf)
     mf.is_refreshable = True
+    mf.file_encoding = None     # text file encoding (passing None to :func:`open` encoding argument defaults to utf-8)
 
 
 def path_pfx_puttable_content(mf: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`PUTTABLE_TEMPLATE_PATH_PFX` prefix.
+    """ path prefix callee for the text file :data:`PUTTABLE_TEMPLATE_PATH_PFX` prefix.
 
     :param mf:                  ManagedFile instance.
     """
     _path_pfx_check_single_refreshable(mf)
     mf.is_refreshable = True
-    mf.add_content_transformer(transform_puttable_content)    # postpone check of REFRESHABLE_TEMPLATE_MARKER
+    mf.add_content_transformer(transform_puttable_content)          # postpone check of REFRESHABLE_TEMPLATE_MARKER
 
 
 def path_pfx_updatable_content(mf: ManagedFile, *_args: str):
-    """ path prefix callee for the :data:`UPDATABLE_TEMPLATE_PATH_PFX` prefix.
+    """ path prefix callee for the text file :data:`UPDATABLE_TEMPLATE_PATH_PFX` prefix.
 
     :param mf:                  ManagedFile instance.
     """
     _path_pfx_check_single_refreshable(mf)
     mf.is_refreshable = True
-    mf.add_content_transformer(transform_updatable_content)   # postpone check of UPDATABLE_TEMPLATE_MARKER
+    mf.add_content_transformer(transform_updatable_content)         # postpone check of REFRESHABLE_TEMPLATE_MARKER
 
 
 DEFAULT_PATH_PREFIXES_PARSERS: PathPrefixesParsers = {
+    F_STRINGS_PATH_PFX: (0, path_pfx_parametrize_with_context),
     OVERWRITABLE_BIN_TEMPLATE_PATH_PFX: (0, path_pfx_overwritable_binary_content),
     OVERWRITABLE_TEMPLATE_PATH_PFX: (0, path_pfx_overwritable_content),
     PUTTABLE_TEMPLATE_PATH_PFX: (0, path_pfx_puttable_content),
     UPDATABLE_TEMPLATE_PATH_PFX: (0, path_pfx_updatable_content),
-    F_STRINGS_PATH_PFX: (0, path_pfx_parametrize_with_context),
 }
 """ mapping of the default path prefixes parsers with to a tuple of the prefix args count and the parser callee. """
 
