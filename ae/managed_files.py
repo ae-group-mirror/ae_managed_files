@@ -1,22 +1,8 @@
 """
-managed files
-=============
+managed files api
+=================
 
-this portion of the ``ae`` namespace is creating or refreshing files from templates.
-
-the update strategy can be individually configured for every template folder and file.
-
-the engine to convert templates into destination files is designed to be easily extendable
-(see the :mod:`~aedev.project_manager.templates` module).
-
-variations in the file content, like the name and version of a concrete project,
-can be dynamically replaced with actual values from individual context variables, either by
-embedded f-string-expressions or by replacers/placeholders. replacers are useful especially
-for Python code file templates because they are get syntactically interpreted as Python comments
-in the template file, and could get replaced by Python code statements in the resulting destination file.
-
-use the function :func:`deploy_template` to convert a single template into a destination file.
-for bulk destination file deployments from multiple templates, use the :class:`TemplateMngr` class.
+see the section :ref:`create and refresh files from templates` for more info and examples.
 """
 from __future__ import annotations
 import os
@@ -30,7 +16,7 @@ from ae.dynamicod import try_eval                                               
 from ae.literal import Literal                                                              # type: ignore
 
 
-__version__ = '0.3.9'
+__version__ = '0.4.9'
 
 
 DEPLOY_LOCK_EXT = '.locked'                             #: additional file ext; blocking the deployment of a template
@@ -67,8 +53,8 @@ TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID = "ReplaceWith"    #: replacers id of :func
 
 # types ---------------------------------------------------------------------------------------------------------------
 
-type ContentTransformer = Callable[['ManagedFile'], str | bytes]  #: file content transformer function
-type ContentType = str | bytes | None                   #: content type of managed file (None==file-not-exists)
+type ContentTransformer = Callable[[ManagedFile], str | bytes]  #: file content transformer function
+type ContentType = str | bytes | None                   #: content type of managed file (`None`==file-not-exists)
 
 type ContextVars = dict[str, Any]                       #: template placeholder variables to be replaced by its value
 
@@ -105,7 +91,7 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         :param patcher:         templates collection (project) name and version (to be added into the destination file).
         :param template_path:   template/source file path.
         :param dst_path:        destination file path with optional path prefixes in its file and/or folder names.
-        :raises Exception:      extends context of any (NameError/SyntaxError/ValueError/...) exception, raised
+        :raises Exception:      extends context of any (NameError/SyntaxError/ValueError) exception, raised
                                 in the transformation of the destination file path/name, with the f-string-value
                                 (in the instantiation argument :paramref:`~ManagedFile.__init__.dst_path`) and the
                                 f-string-variables-values (in the :attr:`TemplateMngr.context_vars` attribute of the
@@ -132,8 +118,8 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         self.file_content: ContentType = None
         self.old_content: ContentType = None    #: old dst file content loaded if unskipped in path prefixes
 
-        self.is_refreshable = False         #: set to True in path prefix parser to allow to overwrite destination file
-        self.is_up_to_date = False          #: set to True if destination file is up-to-date
+        self.is_refreshable = False         #: set `True` in path prefix parser to allow to overwrite destination file
+        self.is_up_to_date = False          #: set to `True` if destination file is up-to-date
 
     def __repr__(self):
         """ show destination path, patcher and attributes of this managed file. """
@@ -145,8 +131,8 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
         :param tf:              content transformer callable, to be called with this instance as argument and returning
                                 the new/transformed content.
-        :param encoding:        for text files specify an encoding string (like 'ascii') or None that is accepted by
-                                the built-in :func:`open` function (None defaults to 'utf-8').
+        :param encoding:        for text files specify an encoding string (like 'ascii') or `None` that is accepted by
+                                the built-in :func:`open` function (`None` defaults to 'utf-8').
                                 for binary files specify 'bin-bytes' to keep a binary transformer (bytes file content).
         """
         if self.file_encoding not in ('bin-bytes', encoding):
@@ -202,7 +188,7 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
     def process_path_prefixes(self) -> bool:
         """ parse, reduce and call back the template file name/path prefixes to check for early deploy skip or errors.
 
-        :return:                False if one of the path prefixes parsers errored or skipped this managed file.
+        :return:                `False` if one of the path prefixes parsers errored or skipped this managed file.
         """
         arg_counts = self.manager.path_prefixes_arg_counts
         prefixes_parsers = self.manager.path_prefixes_parsers
@@ -227,7 +213,7 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
 
     @property
     def skip_or_error(self) -> bool:
-        """ return True if this managed file got skipped or added an error comment. """
+        """ return `True` if this managed file got skipped or added an error comment. """
         return any(_.startswith((MANAGED_FILE_ERROR_COMMENT, MANAGED_FILE_SKIP_COMMENT)) for _ in self.comments)
 
     def warning(self, message: str):
@@ -241,20 +227,15 @@ class ManagedFile:          # pylint: disable=too-many-instance-attributes
         """ deploy file content of this managed file to its :attr:`dst_file_path`, creating not-existing folders. """
         encoding = self.file_encoding
         if encoding == 'bin-bytes':
-            # noinspection PyTypeChecker
+            assert isinstance(self.file_content, bytes)
             write_bin_file(self.dst_file_path, self.file_content, make_dirs=True)
         else:
-            # noinspection PyTypeChecker
+            assert isinstance(self.file_content, str)
             write_file(self.dst_file_path, self.file_content, encoding=encoding, make_dirs=True)
 
 
 class TemplateMngr:
-    """ checks/deploys/renews managed files from templates and context variables.
-
-    .. hint::
-        example usages of this class can be found in the helper functions :func:`deploy_template` (in this module)
-        and :func:`~aedev.project_manager.templates.check_templates` (of the ``pjm`` project-manager tool).
-    """
+    """ checks/deploys/renews managed files from templates and context variables. """
     def __init__(self, template_files: TemplateFiles, prefix_parsers: PathPrefixesParsers, context_vars: ContextVars,
                  *, prefix_args_sep: str = PATH_PREFIXES_ARGS_SEP, **replacers: Replacer):
         """
@@ -270,7 +251,6 @@ class TemplateMngr:
                                 :func:`~ae.dynamicod.try_eval`) extend this argument with a '_add_base_globals' key.
         :param prefix_args_sep: path prefixes arguments separator/suffix; defaults to :data:`PATH_PREFIXES_ARGS_SEP`.
         :param replacers:       optional replacers: key=placeholder-id and value=replacer callable.
-
         """
         self.template_files = template_files
 
@@ -326,7 +306,7 @@ class TemplateMngr:
     def log_lines(self, verbose: bool = False) -> list[str]:
         """ return a list of the log lines of all the managed/checked template files.
 
-        :param verbose:         pass True to get more verbose log entries and include also not deployed files.
+        :param verbose:         pass `True` to get more verbose log entries and include also not deployed files.
         :return:                list of log entry lines (preformatted with indent to direct console printout).
         """
         lines = []
@@ -421,23 +401,21 @@ def patch_string(content: str, tpl_vars: ContextVars, **replacers: Replacer) -> 
                                 a '_add_base_globals' key to add useful globals (see :func:`~ae.dynamicod.try_eval`).
     :param replacers:           optional kwargs dict with key/name=placeholder-id and value=replacer-callable.
                                 to specify additional replacers and also to overwrite or to deactivate the default
-                                template placeholder replacers specified in :data:`DEFAULT_TEMPLATE_PLACEHOLDERS`
+                                template placeholder replacers specified in :data:`DEFAULT_REPLACERS`.
     :return:                    string resulting from the evaluation of the specified content f-string and from the
                                 default and additionally specified template :paramref;`~patch_string.replacers`.
     :raises AssertionError:     if :data:`TEMPLATE_PLACEHOLDER_ARGS_SUFFIX` is a replacers comment.
     :raises Exception:          if evaluation of the :paramref;`~patch_string.content` f-string failed (because of
-                                missing-globals-NameError/SyntaxError/ValueError/...).
+                                missing-globals-NameError/SyntaxError/ValueError).
     """
     content = try_eval('f"""' + content.replace('"""', r'\"\"\"') + '"""', glo_vars=tpl_vars)
     if not content:
         return ""
-    # noinspection PyUnresolvedReferences
     content = content.replace(r'\"\"\"', '"""')     # recover docstring delimiters
 
     suffix = TEMPLATE_PLACEHOLDER_ARGS_SUFFIX
     len_suf = len(suffix)
     all_replacers = DEFAULT_REPLACERS
-    # noinspection PyTypeChecker
     all_replacers.update(replacers)
     for key, fun in all_replacers.items():
         prefix = TEMPLATE_PLACEHOLDER_ID_PREFIX + key + TEMPLATE_PLACEHOLDER_ID_SUFFIX
@@ -545,7 +523,6 @@ def prefix_parser(dst_path: str, prefixes_arg_counts: PathPrefixesArgCounts, arg
             name_rest = args_and_rest[-1]
         parts.append("".join([name_rest] + name_suffixes))
 
-    # noinspection PyTypeChecker
     return os_path_join(*parts), prefixes_args
 
 
@@ -573,7 +550,7 @@ def replace_with_template_args(args_str: str) -> str:
     return args_str
 
 
-DEFAULT_REPLACERS = {
+DEFAULT_REPLACERS: dict[str, Replacer] = {
     TEMPLATE_INCLUDE_FILE_PLACEHOLDER_ID: replace_with_file_content_or_default,
     TEMPLATE_REPLACE_WITH_PLACEHOLDER_ID: replace_with_template_args,
 }
@@ -585,7 +562,7 @@ def transform_parametrize_content(mf: ManagedFile) -> str:
 
     :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
-    :raises Exception:          extends original exception (NameError/SyntaxError/ValueError/...) raised in the
+    :raises Exception:          extends original exception (NameError/SyntaxError/ValueError) raised in the
                                 transformation of the provided f-string :attr:`~ManagedFile.file_content` together with
                                 the :attr:`~TemplateMngr.context_vars`.
     """
@@ -598,14 +575,19 @@ def transform_parametrize_content(mf: ManagedFile) -> str:
 
 
 def transform_puttable_content(mf: ManagedFile) -> str:
-    """ content transformer callee added via the :data:`PUTTABLE_TEMPLATE_PATH_PFX` path prefix.
+    """ content transformer callee added via the :data:`PUTTABLE_TEMPLATE_PATH_PFX` text file path prefix.
 
     :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
     """
-    if (old_content := mf.old_content) and REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
-        mf.skip("missing refreshable content marker in destination file")
-        return ""
+    old_content = mf.old_content
+    if old_content:
+        if not isinstance(old_content, str):
+            mf.skip(f"puttable destination file is not a text file ({old_content=})")
+            return ""
+        if REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
+            mf.skip("missing refreshable content marker in destination file")
+            return ""
 
     new_content = extend_content_with_marker(mf.dst_file_path,
                                              cast(str, mf.file_content),
@@ -618,14 +600,17 @@ def transform_puttable_content(mf: ManagedFile) -> str:
 
 
 def transform_updatable_content(mf: ManagedFile) -> str:
-    """ content transformer callee added via the :data:`UPDATABLE_TEMPLATE_PATH_PFX` path prefix.
+    """ content transformer callee added via the :data:`UPDATABLE_TEMPLATE_PATH_PFX` text file path prefix.
 
     :param mf:                  ManagedFile instance.
     :return:                    transformed file content.
     """
     old_content = mf.old_content
     if old_content is None:
-        mf.skip("destination file does not exist")
+        mf.skip("updatable destination file does not exist")
+        return ""
+    if not isinstance(old_content, str):
+        mf.skip(f"updatable destination file is not a text file {old_content=}")
         return ""
     if REFRESHABLE_TEMPLATE_MARKER not in old_content[:369]:
         mf.skip("missing refreshable content marker in destination file")

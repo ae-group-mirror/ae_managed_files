@@ -189,6 +189,7 @@ class TestContentTransformers:
             transform_parametrize_content(mf)
         assert mf.template_path in str(exc)
         assert "invalid_number" in str(exc)
+        assert mf.comments == []
 
     def test_transform_puttable_content(self, mgr_instance, request):
         mf = mgr_instance.managed_files[0]
@@ -210,6 +211,18 @@ class TestContentTransformers:
         assert isinstance(mf.file_content, str)
         assert mf.file_content in new_content
         assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
+        assert mf.comments == []
+
+    def test_transform_puttable_content_wrong_type(self, mgr_instance):
+        mf = mgr_instance.managed_files[0]
+        mf.old_content = b"{invalid ; context : expression}"
+
+        content = transform_puttable_content(mf)
+
+        assert content == ""
+        assert mf.skip_or_error is True
+        assert len(mf.comments) == 1
+        assert 'old_content' in mf.comments[0]
 
     def test_transform_updatable_content(self, mgr_instance, request):
         mf = mgr_instance.managed_files[0]
@@ -231,6 +244,18 @@ class TestContentTransformers:
         assert isinstance(mf.file_content, str)
         assert mf.file_content in new_content
         assert mf.file_content == (tst_dst_ends_content if ovw else tst_dst_full_content)
+        assert mf.comments == []
+
+    def test_transform_updatable_content_wrong_type(self, mgr_instance):
+        mf = mgr_instance.managed_files[0]
+        mf.old_content = b"{invalid ; context : expression}"
+
+        content = transform_updatable_content(mf)
+
+        assert content == ""
+        assert mf.skip_or_error is True
+        assert len(mf.comments) == 1
+        assert 'old_content' in mf.comments[0]
 
 
 class TestHelpers:
@@ -488,7 +513,7 @@ class TestHelpers:
         assert parsed[0] == ('pre_fix_', ())
 
 
-class TestManagedFiles:     # only basic tests - full funcionality tests are done via TestTemplateMngr
+class TestManagedFiles:     # only basic tests - full functionality tests are done via TestTemplateMngr
     def test_init_instance(self, mf_instance: ManagedFile):
         assert mf_instance.manager
         assert mf_instance.patcher == tst_patcher
@@ -513,9 +538,9 @@ class TestManagedFiles:     # only basic tests - full funcionality tests are don
 
         mgr = MagicMock()
         mgr.context_vars = {}
-        with pytest.raises(NameError) as excinfo:
+        with pytest.raises(NameError) as exc_info:
             ManagedFile(mgr, "init tst patcher", "template/path/{file}.xxx", dst_path="path/{context_var}.xxx")
-        assert "context_var" in excinfo.value.args[0]
+        assert "context_var" in exc_info.value.args[0]
 
         mgr.context_vars = {'context_var': 'var_value'}
         f = ManagedFile(mgr, "init tst patcher", "template/path/{file}.xxx", dst_path="path/{context_var}.xxx")
@@ -605,7 +630,7 @@ class TestTemplateMngr:
         tpl_file_name = path_pfx1 + path_pfx2 + tst_tpl_name_rest
         tpl_file_path = os_path_join(tpl_dir, tpl_file_name)
         write_file(tpl_file_path, tst_tpl_content)
-        pfx_parsers = {path_pfx1: (0, _path_pfx_parser1), path_pfx2: (0, _path_pfx_parser2)}
+        pfx_parsers: PathPrefixesParsers = {path_pfx1: (0, _path_pfx_parser1), path_pfx2: (0, _path_pfx_parser2)}
 
         man = TemplateMngr(
             [(tst_patcher, tpl_file_path, tpl_file_name)],
